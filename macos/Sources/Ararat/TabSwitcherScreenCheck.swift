@@ -8,7 +8,7 @@ final class TabSwitcherScreenCheck {
     private static let names = [
         "visible_vs_detach", "two_real_previews", "top_aligned_crop", "capture",
         "quick_tap", "held_once_without_fade", "release_immediate", "escape_immediate",
-        "five_previews_after_space_return", "saved_favicon", "navigation_refresh", "slow_page_favicon",
+        "five_previews_after_space_return", "saved_favicon", "navigation_refresh", "blank_page_globe", "slow_page_favicon",
         "aborted_navigation", "split_focus_no_readback", "split_leave_both_readbacks",
         "little_window_handoff", "private_previews", "private_unpainted_globe", "private_memory_only",
         "private_close_releases", "close_during_readback",
@@ -547,6 +547,49 @@ final class TabSwitcherScreenCheck {
             try checkNamed("navigation_refresh", assertions: ["new_document_preview": real(panel, red, "blue")],
                            observed: ["item": red, "url": tab(runtime, red)?.url as Any? ?? NSNull(),
                                       "tile": previewDetails(panel.previewForCheck(item: red), expected: "blue")])
+        }
+
+        await scene("blank_page_globe") {
+            let item = try await open(runtime, url: url("red"))
+            try await awaitPicture(runtime, item, "red")
+            guard let target = tab(runtime, item) else { throw CheckFailure(condition: "blank target tab missing") }
+            let live = target.liveId
+            let navigationCount = target.navigationCount
+            let sourceBeforeCommit = adapter.switcherThumbnailSource(item: item, live: live)
+            let mark = events.count
+            host.checkNavigate("about:blank", disposition: "current")
+            try await wait("blank URL committed and reserve skipped", observed: {
+                ["item": item, "live": live, "previous_navigation_count": navigationCount,
+                 "current_navigation_count": target.navigationCount, "url": target.url,
+                 "readbacks": self.readbacks(for: [live], since: mark)]
+            }) {
+                target.navigationCount > navigationCount && target.url == "about:blank" && !target.isLoading &&
+                    self.hasEvent(mark: mark, live: live, source: "reserve", status: "skipped", reasons: ["blank-url"])
+            }
+            let sourceAfterCommit = adapter.switcherThumbnailSource(item: item, live: live)
+
+            _ = try await open(runtime, url: url("green"))
+            let panel = try await hold(runtime)
+            let tile = panel.previewForCheck(item: item)
+            let globePixels = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)?.tiffRepresentation
+            let matchesGlobe = globePixels.map { tile?.image?.tiffRepresentation == $0 } ?? false
+            let source = adapter.switcherThumbnailSource(item: item, live: live)
+            let prehideSkipped = hasEvent(mark: mark, live: live, source: "prehide", status: "skipped", reasons: ["blank-url"])
+            let hasLiveFavicon = target.favicon != nil
+            try checkNamed("blank_page_globe", assertions: [
+                "same_live_tab": tab(runtime, item)?.liveId == live,
+                "picture_dropped_at_commit": sourceBeforeCommit != "favicon" && sourceAfterCommit == "favicon",
+                "prehide_skipped_blank_url": prehideSkipped, "source_favicon": source == "favicon",
+                "tile_not_filled": tile?.fillsPreview == false,
+                "tile_size_22pt": tile?.size == NSSize(width: 22, height: 22), "tile_is_globe": matchesGlobe,
+                "no_live_favicon": !hasLiveFavicon,
+            ], observed: [
+                "item": item, "live": live, "current_live": tab(runtime, item)?.liveId as Any? ?? NSNull(),
+                "url": target.url, "previous_navigation_count": navigationCount, "current_navigation_count": target.navigationCount,
+                "source_before_commit": sourceBeforeCommit, "source_after_commit": sourceAfterCommit, "source": source,
+                "tile": previewDetails(tile), "matches_globe": matchesGlobe, "has_live_favicon": hasLiveFavicon,
+                "readbacks": readbacks(for: [live], since: mark),
+            ])
         }
 
         await scene("slow_page_favicon") {

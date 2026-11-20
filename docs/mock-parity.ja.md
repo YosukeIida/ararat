@@ -122,7 +122,7 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `D-PrivateWindow` | プライベートウィンドウと URL 欄のマスク | `private-window` | 相違 | `private-window` のダーク外観、マスク、Private 表示は一致する（決定 86）。サイドバーには Today、Clear、Library、+ があり、New Tab と表示され、終了時の削除を説明する脚注がない。 |
 | `D-PrivateWindowEmpty` | 空のプライベートウィンドウ | — | 相違 | 実装では最後のタブを閉じるとプライベートウィンドウも閉じる。モックは空のプライベートウィンドウを描く。オーナー判断待ち。 |
 | `D-SadTab` | クラッシュした Today タブとピン | `errorpages-today-crash`, `errorpages-pin-crash` | 修正済み、VM 再確認待ち | ページには悲しい顔のウィンドウを表示する。サイドバーの行には A-TabRows で指定された警告アイコンを使う（決定 16）。 |
-| `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 修正済み、VM 再確認待ち | ウィンドウ中央の切り替え画面にページのサムネイルまたは大きな favicon と、現在のキー割り当てを表示する。オーナーは 156 × 104 pt のプレビューと 150 ms の表示待ちを承認した（Yab が報告した Arc の実測値）。 |
+| `D-TabSwitcher` | Control-Tab の切り替え画面 | `commandbar-tab-switcher` | 修正済み、VM 再確認待ち | ウィンドウ中央の切り替え画面にページのサムネイルまたは大きな favicon と、現在のキー割り当てを表示する。`about:blank` と `about:srcdoc` がコミットされた場合は globe を表示する。オーナーは 156 × 104 pt のプレビューと 150 ms の表示待ちを承認した（Yab が報告した Arc の実測値）。 |
 | `D-Toasts` | コピー完了、Clear の Undo、失敗バナー | `toasts-toast`, `toasts-banner` | 相違 | Link copied は 14 pt のリンクアイコン付きで、ページ下部に高さ 40 pt で表示する。モックはサイドバー内に高さ 36 pt で表示する。リンクアイコンと履歴削除失敗の警告カードは VM 再確認待ち、Undo と更新準備完了は撮影待ちである。 |
 | `D-Toasts` | 更新完了と Restart | — | 未実装 | 更新機能は Sparkle が担う。Restart 付きのトーストは未実装である。 |
 | `Dark` | ダークのブラウザ全体 | `fullscreen-dark-docked` | 相違 | `973f57e` の `fullscreen-dark-docked` は中間の灰色の背景と明るい灰色の選択行を示した。現行コードは実測の黒に近い背景と 19.5% の白のオーバーレイを使い、design-rowcontrast-1 にダーク外観で dock 固定の全画面画像がないため、画像での再確認は保留である。 |
