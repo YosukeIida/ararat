@@ -764,12 +764,12 @@ final class TabSwitcherScreenCheck {
             try await select(runtime, green)
             let panel = try await hold(runtime)
             try checkNamed("little_window_handoff", assertions: [
+                "preview_is_real": real(panel, handedItem, "red"),
+                "prehide_requested": hasEvent(mark: mark, live: live, source: "prehide", status: "requested"),
                 "readback_completed": hasEvent(mark: mark, live: live, source: "reserve", status: "completed"),
             ], observed: ["item": handedItem, "live": live, "previous_navigation_count": navigationCount,
                           "current_navigation_count": tab(runtime, handedItem)?.navigationCount as Any? ?? NSNull(),
                           "reserve_wait_ms": reserveElapsed, "reserve_limit_ms": 1000 * reserveTimeout,
-                          "preview_is_real": real(panel, handedItem, "red"),
-                          "prehide_requested": hasEvent(mark: mark, live: live, source: "prehide", status: "requested"),
                           "tile": previewDetails(panel.previewForCheck(item: handedItem), expected: "red"),
                           "readbacks": readbacks(for: [live], since: mark)])
         }
