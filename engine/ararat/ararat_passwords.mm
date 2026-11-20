@@ -1,5 +1,6 @@
 #import "ararat/core/ararat_passwords.h"
 
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <string>
@@ -7,11 +8,13 @@
 
 #include "base/command_line.h"
 #include "base/containers/span.h"
+#include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "base/uuid.h"
 #include "chrome/browser/affiliations/affiliation_service_factory.h"
@@ -81,6 +84,21 @@ NSMapTable<NSString*, ARPasswords*>* Handles() {
   static NSMapTable<NSString*, ARPasswords*>* handles =
       [NSMapTable strongToWeakObjectsMapTable];
   return handles;
+}
+
+bool IsScratchPasswordProfile(const base::FilePath& path) {
+  const char* temp = std::getenv("TMPDIR");
+  if (!temp || !base::FilePath(temp).IsAbsolute() || path.ReferencesParent())
+    return false;
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  const auto root = base::MakeAbsoluteFilePath(base::FilePath(temp));
+  const auto profile = base::MakeAbsoluteFilePath(path);
+  const auto system_temp = base::MakeAbsoluteFilePath(
+      base::FilePath(base::SysNSStringToUTF8(NSTemporaryDirectory())));
+  const base::FilePath shared_temp("/private/tmp");
+  return (root == system_temp || system_temp.IsParent(root) ||
+          root == shared_temp || shared_temp.IsParent(root)) &&
+         root.IsParent(profile);
 }
 
 }  // namespace
@@ -233,7 +251,8 @@ NSMapTable<NSString*, ARPasswords*>* Handles() {
   const auto* command = base::CommandLine::ForCurrentProcess();
   if ((command->GetSwitchValueASCII("ararat-check") == "passwords" ||
        command->GetSwitchValueASCII("ararat-screen") == "settings-passwords") &&
-      command->HasSwitch("use-mock-keychain")) {
+      command->HasSwitch("use-mock-keychain") &&
+      IsScratchPasswordProfile(profile_->GetPath())) {
     g_browser_process->local_state()->SetBoolean(
         password_manager::prefs::kHadBiometricsAvailable, true);
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(

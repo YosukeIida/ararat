@@ -3,12 +3,27 @@ import AraratEngineAPI
 
 @MainActor
 final class PasswordsStoreCheck {
-    nonisolated static func validArguments(_ args: [String]) -> Bool {
+    private nonisolated static let modes: Set<String> = ["--ararat-check=passwords", "--ararat-screen=settings-passwords"]
+
+    private nonisolated static func guardOptions(_ arguments: [String]) -> [String] {
+        let whitespace = CharacterSet(charactersIn: " \t\n\r\u{000B}\u{000C}")
+        return arguments.dropFirst().map { argument in
+            let option = argument.trimmingCharacters(in: whitespace)
+            return option.hasPrefix("-") && !option.hasPrefix("--") ? "-" + option : option
+        }
+    }
+
+    nonisolated static func requiresScratchGuard(_ arguments: [String]) -> Bool {
+        guardOptions(arguments).contains(where: modes.contains)
+    }
+
+    nonisolated static func validArguments(_ arguments: [String]) -> Bool {
+        let args = guardOptions(arguments)
         let roots = [NSTemporaryDirectory(), "/tmp"].map {
             URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/"
         }
-        let modes = args.filter { $0.hasPrefix("--ararat-check") || $0.hasPrefix("--ararat-screen") }
-        return !args.contains("--") && (modes == ["--ararat-check=passwords"] || modes == ["--ararat-screen=settings-passwords"])
+        let selected = args.filter { $0.hasPrefix("--ararat-check") || $0.hasPrefix("--ararat-screen") }
+        return !args.contains("--") && selected.count == 1 && selected.contains(where: modes.contains)
             && args.contains("--use-mock-keychain") && ["--user-data-dir", "--ararat-db"].allSatisfy { name in
                 let matches = args.filter { $0 == name || $0.hasPrefix(name + "=") }
                 guard matches.count == 1, matches[0].hasPrefix(name + "=") else { return false }

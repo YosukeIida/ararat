@@ -458,6 +458,7 @@ A small Rust service: blob put/get/list per group, device-key verification, rate
 - Core: unit tests for anything that loses or leaks data when wrong (merge, tree invariants, crash reconciliation, import, ATC matching, archive rules) and for bugs that shipped (Ardia ledger 1.9).
 - UI: the harness runs the components on fixture data; a command channel drives it without the pointer.
 - Engine: hidden instances for broad coverage, plus visible checks for what hidden runs cannot show (focus, passkeys, fullscreen, accessibility, compositor timing).
+- The engine's startup guard validates both Chromium switch prefixes for its check and screen modes. The Passwords guard also validates both prefixes in Swift. Use the documented double-dash spelling to select a Swift runner. Mock password authentication requires the loaded profile's resolved path to be below a temporary directory.
 - Crash and relaunch tests: kill the process at chosen points and check reconciliation.
 - Sync: offline device returning after edits, device removal and rekey, restore from backup.
 - Main-thread hitch monitor from the first build (Cra ledger 13).

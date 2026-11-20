@@ -74,4 +74,22 @@ struct PasswordsBridgeTests {
         #expect(!PasswordsStoreCheck.validArguments(screen + ["--ararat-db=/Users/example/workspace"]))
         #expect(!PasswordsStoreCheck.validArguments(screen.filter { $0 != "--use-mock-keychain" }))
     }
+
+    @Test func passwordsGuardRecognizesBothChromiumSwitchPrefixes() {
+        for mode in ["ararat-check=passwords", "ararat-screen=settings-passwords"] {
+            for prefix in ["-", "--"] {
+                let launch = ["Ararat", prefix + mode, prefix + "use-mock-keychain"]
+                #expect(PasswordsStoreCheck.requiresScratchGuard(launch))
+                #expect(!PasswordsStoreCheck.validArguments(launch))
+                let scratch = launch + [prefix + "user-data-dir=/tmp/pwswitch-test/profile",
+                                        prefix + "ararat-db=/tmp/pwswitch-test/workspace"]
+                #expect(PasswordsStoreCheck.validArguments(scratch))
+                #expect(!PasswordsStoreCheck.validArguments(scratch + ["-user-data-dir=/Users/example/Profile"]))
+                let afterTerminator = ["Ararat", "--", prefix + mode]
+                #expect(PasswordsStoreCheck.requiresScratchGuard(afterTerminator))
+                #expect(!PasswordsStoreCheck.validArguments(afterTerminator))
+                #expect(PasswordsStoreCheck.requiresScratchGuard(["Ararat", " " + prefix + mode + " "]))
+            }
+        }
+    }
 }
