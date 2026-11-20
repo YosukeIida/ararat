@@ -1246,7 +1246,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       // (`settings-tabs`) becomes the check mode every family uses (`screen-settings-tabs`).
       if let screenName, let mode = SettingsScreenCheck.Mode.screenMode(screenName) { browserCheckMode = mode.checkMode }
       if passwordPromptScreen || ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header", "urlfield", "private-downloads", "little-window", "folder-upload"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "tab-switcher" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" || screenName == "urlfield" || screenName == "little-window" || screenName == "folder-upload" {
-        let fixture = try PromptFixtureServer()
+        let fixture = try PromptFixtureServer(tracePasswordPrompt: passwordPromptScreen)
         promptFixture = fixture
         fixture.start { [weak self] result in
           DispatchQueue.main.async {
@@ -10439,6 +10439,7 @@ if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-ch
     if name == "site-controls" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the site-controls check" }
     if name == "ext-actions" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the ext-actions check" }
     if name == "private-window" { result["failed_conditions"] = ["watchdog"]; result["wait"] = "main thread did not finish the private-window check" }
+    if name == "password-prompt" { result["details"] = PasswordPromptCheck.watchdogDetails() }
     if !screen { result.merge(incognitoResultIdentity(check: name, arguments: CommandLine.arguments)) { _, new in new } }
     if screen { result["screen"] = name }
     if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) {

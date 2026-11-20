@@ -3,11 +3,13 @@ import Network
 
 final class PromptFixtureServer {
   private let listener: NWListener
+  private let tracePasswordPrompt: Bool
   private let queue = DispatchQueue(label: "ararat.prompt-fixture")
   private var resumeAllowed = false
   private var pendingConnections: [NWConnection] = []
 
-  init() throws {
+  init(tracePasswordPrompt: Bool = false) throws {
+    self.tracePasswordPrompt = tracePasswordPrompt
     let parameters = NWParameters.tcp
     parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
     listener = try NWListener(using: parameters)
@@ -54,6 +56,9 @@ final class PromptFixtureServer {
             if complete || error != nil { connection.cancel() }
             else { self.receive(connection, data: request) }
             return
+          }
+          if self.tracePasswordPrompt {
+            FileHandle.standardError.write(Data("ararat-trace: password-fixture post_received success_page=form_gone\n".utf8))
           }
         }
         if path == "/switcher/slow" {
@@ -159,13 +164,25 @@ final class PromptFixtureServer {
       <button type="submit">Sign in</button>
     </form>
     <script>
-      function submitAraratPasswordFixture() {
+      function fillAraratPasswordFixture() {
+        const form = document.querySelector('form');
+        if (!form) return 'missing_form';
         const scenario = new URL(location.href).searchParams.get('case');
         const known = scenario === 'save' || scenario === 'update';
-        document.getElementById('username').value = known ? 'fixture' : 'fixture-' + scenario;
-        document.getElementById('password').value =
-          scenario === 'update' ? 'fixture-updated-72' : 'fixture-initial-43';
-        document.querySelector('form button').click();
+        // Chromium keeps the prior autofilled value after a script assignment.
+        // Edit as the renderer's text editor so submission uses the new value.
+        for (const [id, value] of [
+          ['username', known ? 'fixture' : 'fixture-' + scenario],
+          ['password', scenario === 'update' ? 'fixture-updated-72' : 'fixture-initial-43'],
+        ]) {
+          const input = document.getElementById(id);
+          if (!input || input.form !== form) return 'missing_field';
+          input.focus();
+          input.select();
+          if (!document.execCommand('insertText', false, value) || input.value !== value)
+            return 'edit_failed';
+        }
+        return 'filled';
       }
     </script>
     """
