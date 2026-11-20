@@ -2716,9 +2716,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
           FileHandle.standardError.write(Data("ararat-trace: switcher-preview item=\(id) source=\(source)\n".utf8))
         }
         return tab.flatMap { self?.adapter?.switcherThumbnail(item: id, live: $0.liveId) }
-      }, favicon: { [weak self, weak host] id in
+      }, favicon: { [weak self] id in
         guard self?.snapshot.shownSpaceId == space else { return nil }
-        if let tab = (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id }) { return tab.favicon }
         return self?.sidebar?.favicons[id]
       })
     tabSwitcher = switcher
@@ -2751,7 +2750,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       }
       let recent = try? result.get()
       self.switcherUnloadedFavicons = recent?.unloaded ?? [:]
-      if !self.switcherUnloadedFavicons.isEmpty { self.refreshSidebarFavicons() }
+      self.refreshSidebarFavicons()
       let rows = recent?.rows ?? []
       self.commandBarTrace("cycle-tabs rows=\(rows.count)")
       switcher.load(rows)
