@@ -2414,15 +2414,16 @@ final class Runtime: NSObject, NSMenuItemValidation {
 
   func passwordsHandle(profile: String, loaded: ((any ARPasswordsAPI) -> Void)? = nil) -> (any ARPasswordsAPI)? {
     guard let symbol = dlsym(Launcher.handle, "AraratPasswords") else { return nil }
-    typealias Loaded = @convention(block) (AnyObject?) -> Void
-    typealias OpenPasswords = @convention(c) (NSString, Loaded?) -> Unmanaged<AnyObject>?
-    let callback: Loaded? = loaded.map { reply in
-      { object in
-        if let passwords = object as? any ARPasswordsAPI { reply(passwords) }
-      }
-    }
-    return unsafeBitCast(symbol, to: OpenPasswords.self)(profile as NSString, callback)?
-      .takeUnretainedValue() as? any ARPasswordsAPI
+    return Self.openPasswords(symbol, profile: profile, loaded: loaded)
+  }
+
+  static func openPasswords(_ symbol: UnsafeMutableRawPointer, profile: String,
+                            loaded: ((any ARPasswordsAPI) -> Void)?) -> (any ARPasswordsAPI)? {
+    // A Swift-declared C function type with an optional block can pass a Swift thunk as the block.
+    let open = unsafeBitCast(symbol, to: AraratPasswordsFunction.self)
+    return open(profile, loaded.map { reply in
+      { passwords in if let passwords { reply(passwords) } }
+    })
   }
 
   func openSettings(spaceID: String? = nil, passwordsProfile: String? = nil) {
