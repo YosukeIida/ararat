@@ -4,7 +4,7 @@ import SwiftUI
 
 @MainActor
 public final class SettingsModel: ObservableObject {
-    enum Page: Hashable { case general, websites, tabs, shortcuts, airTraffic, appearance, spaces, littleWindow, privacy, extensions, space(String), site(String, String) }
+    enum Page: Hashable { case general, websites, tabs, shortcuts, airTraffic, appearance, spaces, littleWindow, passwords, privacy, extensions, space(String), site(String, String) }
     struct Row: Identifiable, Equatable {
         let id: String
         let pane: Page
@@ -70,6 +70,11 @@ public final class SettingsModel: ObservableObject {
     var hotKeyCenter: LittleWindowHotKeyCenter?
     /// Hands the written values to the Little Windows already open, so a change applies there
     /// too (the bar's label, the next Open in and the frame the close writes).
+    @Published var passwordProfile: String?
+    @Published var passwordManagerEnabled: Bool?
+    var setPasswordManager: ((Bool) -> Bool?)?
+    var closePasswords: (() -> Void)?
+
     var littleWindowSettings: (LittleWindowOpenIn, Bool, Bool) -> Void = { _, _, _ in }
     /// U27w W1/W2: the Websites pane. The seven defaults are the synced core record; the engine
     /// is the source of the per-site exceptions, read on every open. The host is the app's

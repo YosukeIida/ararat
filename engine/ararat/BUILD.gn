@@ -1,9 +1,11 @@
 # Our in-tree layer. engine/scripts/apply copies this directory to
-# //ararat/core. Five targets:
+# //ararat/core.
 #   hooks                    the hook declarations Chrome's patched files include
 #   core                     the version stamp
 #   history_files            per-row history files, keyed by profile and item id
 #   history_files_unittests  their unit test
+#   passwords                the profile password store bridge
+#   passwords_unit_tests     its synthetic store tests
 #   entry                    the browser process's entry point and the extra parts the hook adds
 # The exports config rides all_dependent_configs so the target that links the
 # layer's objects (chrome_dll, see patches/ararat/link-ararat-layer.patch)
@@ -54,6 +56,46 @@ test("history_files_unittests") {
   ]
 }
 
+source_set("passwords") {
+  sources = [ "ararat_passwords.h", "ararat_passwords.mm" ]
+  public = [ "ararat_passwords.h", "public/AraratHostAPI.h" ]
+  deps = [
+    "//base",
+    "//chrome/browser:browser_process",
+    "//chrome/browser/affiliations",
+    "//chrome/browser/password_manager/factories",
+    "//chrome/browser/profiles:profile",
+    "//chrome/browser/profiles:profile_manager",
+    "//components/password_manager/core/browser",
+    "//components/password_manager/core/browser/password_store:password_store_interface",
+    "//components/password_manager/core/browser/ui",
+    "//components/password_manager/core/common",
+    "//components/prefs",
+    "//content/public/browser",
+    "//content/public/common",
+    "//url",
+  ]
+  configs += [ "//build/config/compiler:enable_arc" ]
+}
+
+source_set("passwords_unit_tests") {
+  testonly = true
+  sources = [ "ararat_passwords_unittest.mm" ]
+  deps = [
+    ":passwords",
+    "//base/test:test_support",
+    "//chrome/browser/affiliations",
+    "//chrome/browser/password_manager/factories",
+    "//chrome/test:test_support",
+    "//components/affiliations/core/browser:test_support",
+    "//components/password_manager/core/browser/password_store:test_support",
+    "//content/test:test_support",
+    "//testing/gtest",
+    "//url",
+  ]
+  configs += [ "//build/config/compiler:enable_arc" ]
+}
+
 source_set("entry") {
   sources = [ "ararat_capture.h", "ararat_capture.mm", "ararat_site_state.h", "ararat_site_state.mm", "ararat_site_settings.mm", "ararat_privacy.mm", "ararat_extensions.mm" ]
   sources += [ "ararat_downloads.h", "ararat_downloads.mm", "ararat_autofill_bubble_handler.cc", "ararat_autofill_bubble_handler.h", "ararat_extensions_container.cc", "ararat_extensions_container.h", "ararat_permission_prompt.cc", "ararat_permission_prompt.h", "ararat_main.mm", "ararat_browser_window.cc", "ararat_browser_window.h", "ararat_window_host.mm", "ararat_window_host.h", "ararat_window_check.mm", "ararat_window_check.h", "ararat_tabs_check.mm", "ararat_tab.mm", "ararat_tab.h", "ararat_tab_history.mm", "ararat_tab_history.h", "ararat_measure.mm" ]
@@ -62,6 +104,7 @@ source_set("entry") {
     ":core",
     ":history_files",
     ":hooks",
+    ":passwords",
     "//base",
     "//base:i18n",
     "//chrome/app:command_ids",
@@ -77,6 +120,7 @@ source_set("entry") {
     "//chrome/browser:main_extra_parts",
     "//chrome/browser/browsing_data:constants",
     "//chrome/browser/autofill",
+    "//chrome/browser/password_manager",
     "//chrome/browser/devtools",
     "//chrome/browser/download",
     "//chrome/browser/download/bubble",

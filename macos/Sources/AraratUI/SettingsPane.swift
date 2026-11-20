@@ -65,7 +65,9 @@ enum SettingsRegistry {
                      page: .spaces, rows: spacesRows),
         SettingsPane(id: .littleWindow, title: "Little Window", icon: "rectangle.inset.filled",
                      subtitle: "A small window for links from other apps.", page: .littleWindow, rows: littleWindowRows),
-        SettingsPane(id: .passwords, title: "Passwords", icon: "key", subtitle: "", page: nil, rows: { _ in [] }),
+        SettingsPane(id: .passwords, title: "Passwords", icon: "key", subtitle: "Control password saving and autofill for this profile.", page: .passwords, rows: { _ in
+                         [.init(id: "password-manager", pane: .passwords, title: "Use Ararat’s password manager", subtitle: "")]
+                     }),
         SettingsPane(id: .privacy, title: "Privacy", icon: "hand.raised",
                      subtitle: "What Ararat keeps and what sites can see.", page: .privacy, rows: privacyRows),
         SettingsPane(id: .extensions, title: "Extensions", icon: "puzzlepiece.extension",
@@ -240,6 +242,7 @@ extension SettingsModel.Page {
         case .airTraffic: .airTraffic
         case .appearance: .appearance
         case .littleWindow: .littleWindow
+        case .passwords: .passwords
         case .privacy: .privacy
         case .extensions: .extensions
         case .spaces, .space: .spaces
