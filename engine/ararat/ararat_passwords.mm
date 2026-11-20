@@ -198,6 +198,21 @@ bool IsScratchPasswordProfile(const base::FilePath& path) {
       password_manager::prefs::kBiometricAuthenticationBeforeFilling);
 }
 
+- (BOOL)checkUsesFakeAuthentication {
+  const auto* command = base::CommandLine::ForCurrentProcess();
+  return profile_ &&
+         (command->GetSwitchValueASCII("ararat-check") == "passwords" ||
+          command->GetSwitchValueASCII("ararat-screen") == "password-prompt" ||
+          command->GetSwitchValueASCII("ararat-screen") == "settings-passwords") &&
+         command->HasSwitch("use-mock-keychain") &&
+         IsScratchPasswordProfile(profile_->GetPath());
+}
+
+- (BOOL)checkHadBiometricsAvailable {
+  return g_browser_process->local_state()->GetBoolean(
+      password_manager::prefs::kHadBiometricsAvailable);
+}
+
 - (void)setAuthenticatesBeforeFilling:(BOOL)enabled
                           completion:(void (^)(BOOL))completion {
   if (![self showsFillAuthentication]) {
@@ -248,12 +263,7 @@ bool IsScratchPasswordProfile(const base::FilePath& path) {
     strong->authenticating_ = NO;
     completion(ok);
   });
-  const auto* command = base::CommandLine::ForCurrentProcess();
-  if ((command->GetSwitchValueASCII("ararat-check") == "passwords" ||
-       command->GetSwitchValueASCII("ararat-screen") == "password-prompt" ||
-       command->GetSwitchValueASCII("ararat-screen") == "settings-passwords") &&
-      command->HasSwitch("use-mock-keychain") &&
-      IsScratchPasswordProfile(profile_->GetPath())) {
+  if ([self checkUsesFakeAuthentication]) {
     g_browser_process->local_state()->SetBoolean(
         password_manager::prefs::kHadBiometricsAvailable, true);
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(

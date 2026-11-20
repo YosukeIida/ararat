@@ -22,6 +22,8 @@ private final class PasswordsFixture: NSObject, ARPasswordsAPI {
     var offersToSave = true
     var showsFillAuthentication = true
     var authenticatesBeforeFilling = false
+    let checkUsesFakeAuthentication = false
+    let checkHadBiometricsAvailable = false
     var invalidated = false
     var auth: ((Bool) -> Void)?
     var snapshots: [(ARPasswordsState, [any ARPasswordRowAPI]) -> Void] = []

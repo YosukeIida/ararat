@@ -24,6 +24,7 @@ final class SettingsScreenCheck {
         case littleWindow = "settings-little-window"
         case websites = "settings-websites"
         case passwords = "settings-passwords"
+        case passwordsRealAuth = "passwords-real-auth"
         case privacy = "settings-privacy"
         case extensions = "settings-extensions"
         case about = "settings-about"
@@ -35,6 +36,7 @@ final class SettingsScreenCheck {
             case .frame, .search, .tabs, .toolbar: "tabs"
             case .shortcuts, .airTraffic, .appearance, .spaces, .websites, .passwords, .privacy, .general, .about: String(rawValue.dropFirst("settings-".count))
             case .littleWindow: "little-window"
+            case .passwordsRealAuth: "passwords"
             case .extensions: "extensions"
             }
         }
@@ -59,6 +61,9 @@ final class SettingsScreenCheck {
             case .search: ["first_selected", "arrow_moves", "return_opens", "hit_look", "hit_scrolled", "highlight_stays"]
             case .tabs, .about: ["rows"]
             case .passwords: ["fake_auth", "fixtures", "locked", "search", "detail"]
+            case .passwordsRealAuth:
+                ["fake_auth_off", "fixtures", "fill_switch_hidden", "system_prompt_shown",
+                 "cancel_keeps_locked", "password_unlocks"]
             case .airTraffic: ["rows"] + SettingsATCInput.conditions
             case .shortcuts: ["rows", "record_button_pressed", "recorder_opened", "key_recorded", "menu_updated", "sidebar_updated",
                               "keyboard_pressed", "keyboard_toggled", "recorder_restored"]
@@ -91,8 +96,9 @@ final class SettingsScreenCheck {
     /// Every condition reads the visible window, so every check is a screen check and captures.
     static func conditionNames(_ mode: Mode) -> [String] { common + mode.ledger + ["capture"] }
 
-    static func conditionResults(_ conditions: [String: Bool], mode: Mode) -> (values: [String: Bool], failed: [String]) {
-        let names = conditionNames(mode)
+    static func conditionResults(_ conditions: [String: Bool], mode: Mode,
+                                 unverified: [String: String] = [:]) -> (values: [String: Bool], failed: [String]) {
+        let names = conditionNames(mode).filter { unverified[$0] == nil }
         return (Dictionary(uniqueKeysWithValues: names.map { ($0, conditions[$0] == true) }),
                 names.filter { conditions[$0] != true })
     }
@@ -103,6 +109,8 @@ final class SettingsScreenCheck {
     var images: [String: String] = [:]
     /// Readings a phase records for the diagnostics (frames, statuses), never asserted by name.
     var details: [String: Any] = [:]
+    var unverified: [String: String] = [:]
+    var passwordsAuthPrompt: PasswordsAuthPrompt.Result?
     var airTrafficMenuObserver: NSObjectProtocol?
     var airTrafficMenuTraceObserver: NSObjectProtocol?
     var airTrafficRowMenuEndObserver: NSObjectProtocol?
@@ -229,7 +237,7 @@ final class SettingsScreenCheck {
 extension Runtime {
     func settingsCheckDiagnostics(mode: String) -> [String: Any] {
         guard let check = settingsCheck, let mode = SettingsScreenCheck.Mode.mode(mode) else { return ["phase": browserCheckPhase] }
-        let result = SettingsScreenCheck.conditionResults(check.conditions, mode: mode)
+        let result = SettingsScreenCheck.conditionResults(check.conditions, mode: mode, unverified: check.unverified)
         let probe = (root ?? self).settings?.checkProbe()
         var values: [String: Any] = [
             "check": mode.rawValue, "screen": mode.rawValue,
@@ -239,6 +247,7 @@ extension Runtime {
             "settings_owner": (root ?? self).settingsOwner != nil,
             "details": check.details,
         ]
+        if !check.unverified.isEmpty { values["unverified"] = check.unverified }
         if let probe {
             probe.layout()
             values["settings_visible"] = probe.isVisible
@@ -353,7 +362,7 @@ extension Runtime {
             else { step(check.phase + 1) }
         }
         func finish() {
-            let failed = SettingsScreenCheck.conditionNames(mode).filter { check.conditions[$0] != true }
+            let failed = SettingsScreenCheck.conditionResults(check.conditions, mode: mode, unverified: check.unverified).failed
             finishBrowserCheck(ok: failed.isEmpty,
                                values: ["conditions": check.conditions, "failed_conditions": failed, "images": check.images, "details": check.details])
         }
@@ -377,12 +386,13 @@ extension Runtime {
         func near(_ value: CGFloat, _ target: CGFloat) -> Bool { abs(value - target) <= 1 }
 
         let owner = root ?? self
+        let opensPasswords = mode.paneID == "passwords"
         guard snapshot.spaces.count >= 2, workspace != nil, keyBindings != nil, airTraffic != nil else {
             note("workspace not ready spaces=\(snapshot.spaces.count)")
             return
         }
         if owner.settings == nil {
-            let profile = mode == .passwords
+            let profile = opensPasswords
                 ? snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.profileName : nil
             owner.openSettings(passwordsProfile: profile)
         }
@@ -398,7 +408,7 @@ extension Runtime {
             // The window opens on the shown space's page; the check needs the pane's own page,
             // so it drives the same open path a settings command does and then names the pane.
             guard probe.isVisible, probe.pageID == mode.paneID else {
-                if mode != .passwords {
+                if !opensPasswords {
                     settings.checkOpen(paneID: mode.paneID, shownSpaceID: snapshot.shownSpaceId)
                 }
                 note("opening on \(mode.paneID) (page=\(probe.pageID) visible=\(probe.isVisible))")
@@ -449,6 +459,8 @@ extension Runtime {
             settingsSearchTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
         case .passwords:
             settingsPasswordsTick(probe, check: check, note: note, step: step, end: end, finish: finish, capture: capture)
+        case .passwordsRealAuth:
+            settingsPasswordsRealAuthTick(probe, check: check, note: note, step: step, end: end, finish: finish)
         case .tabs, .shortcuts, .spaces, .appearance, .littleWindow, .websites, .general, .privacy, .extensions, .toolbar, .about:
             if mode == .spaces, check.phase >= 4 {
                 settingsSpacesScrollTick(probe, check: check, note: note, trace: trace, step: step,
@@ -776,7 +788,7 @@ extension Runtime {
                 return
             // The frame and search modes have their own phase machines, and the appearance pane
             // has its own below; leaving them here keeps the pane switch total.
-            case .frame, .search, .appearance, .littleWindow, .websites, .passwords, .general, .privacy, .extensions:
+            case .frame, .search, .appearance, .littleWindow, .websites, .passwords, .passwordsRealAuth, .general, .privacy, .extensions:
                 return
             }
             guard capture(mode == .about ? "about" : mode.rawValue) else { end("capture", false); return }

@@ -9,6 +9,8 @@ private final class TestPasswords: NSObject, ARPasswordsAPI {
     var offersToSave = true
     var showsFillAuthentication = false
     var authenticatesBeforeFilling = false
+    let checkUsesFakeAuthentication = false
+    let checkHadBiometricsAvailable = false
     func setManagerEnabled(_ enabled: Bool) -> Bool { false }
     func setAuthenticatesBeforeFilling(_ enabled: Bool, completion: @escaping @MainActor @Sendable (Bool) -> Void) {
         completion(false)
@@ -76,7 +78,8 @@ struct PasswordsBridgeTests {
     }
 
     @Test func passwordsGuardRecognizesBothChromiumSwitchPrefixes() {
-        for mode in ["ararat-check=passwords", "ararat-screen=settings-passwords", "ararat-screen=password-prompt"] {
+        for mode in ["ararat-check=passwords", "ararat-screen=settings-passwords", "ararat-screen=password-prompt",
+                     "ararat-screen=passwords-real-auth"] {
             for prefix in ["-", "--"] {
                 let launch = ["Ararat", prefix + mode, prefix + "use-mock-keychain"]
                 #expect(PasswordsStoreCheck.requiresScratchGuard(launch))
@@ -84,6 +87,7 @@ struct PasswordsBridgeTests {
                 let scratch = launch + [prefix + "user-data-dir=/tmp/pwswitch-test/profile",
                                         prefix + "ararat-db=/tmp/pwswitch-test/workspace"]
                 #expect(PasswordsStoreCheck.validArguments(scratch))
+                #expect(!PasswordsStoreCheck.validArguments(scratch + ["-ararat-screen=settings-passwords"]))
                 if mode == "ararat-screen=password-prompt" {
                     #expect(!PasswordsStoreCheck.validArguments(scratch + [prefix + "enable-automation"]))
                 }
