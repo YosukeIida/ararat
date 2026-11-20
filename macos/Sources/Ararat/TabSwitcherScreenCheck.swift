@@ -137,8 +137,12 @@ final class TabSwitcherScreenCheck {
     }
 
     private func color(_ image: NSImage?, _ name: String, at height: Double = 0.16) -> Bool {
-        guard let bitmap = bitmap(image), bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0,
-              let pixel = bitmap.colorAt(x: bitmap.pixelsWide / 2, y: Int(Double(bitmap.pixelsHigh - 1) * height))?.usingColorSpace(.sRGB)
+        guard let bitmap = bitmap(image), bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0 else { return false }
+        return color(bitmap, name, row: Int(Double(bitmap.pixelsHigh - 1) * height))
+    }
+
+    private func color(_ bitmap: NSBitmapImageRep, _ name: String, row: Int) -> Bool {
+        guard let pixel = bitmap.colorAt(x: bitmap.pixelsWide / 2, y: row)?.usingColorSpace(.sRGB)
         else { return false }
         let (r, g, b) = (pixel.redComponent, pixel.greenComponent, pixel.blueComponent)
         switch name {
@@ -146,7 +150,6 @@ final class TabSwitcherScreenCheck {
         case "blue": return b > 0.6 && r < 0.35 && g < 0.5
         case "green": return g > 0.45 && r < 0.35 && b < 0.4
         case "yellow": return r > 0.7 && g > 0.55 && b < 0.4
-        case "dark": return max(r, g, b) < 0.24
         default: return false
         }
     }
@@ -219,11 +222,15 @@ final class TabSwitcherScreenCheck {
 
         let panel = try await hold(runtime)
         try check("two_real_previews", real(panel, red, "red") && real(panel, blue, "blue"))
-        let cropHeight = min(viewport.height, viewport.width * 2 / 3)
-        let edge = cropHeight > 0 ? 0.44 * viewport.height / cropHeight : 0
-        let redPreview = panel.previewForCheck(item: red)?.image
-        try check("top_aligned_crop", edge > 0.09 && edge < 0.97 &&
-                  color(redPreview, "red", at: edge - 0.09) && color(redPreview, "dark", at: min(0.99, edge + 0.08)))
+        let cropHeight = floor(viewport.width / 3) * 2
+        let tolerance = 0.03
+        guard cropHeight > 0, viewport.height - cropHeight > 2 * tolerance * cropHeight,
+              let redPreview = bitmap(panel.previewForCheck(item: red)?.image),
+              let edgeRow = (0..<redPreview.pixelsHigh).first(where: { !color(redPreview, "red", row: $0) })
+        else { throw CheckFailure(condition: "top_aligned_crop") }
+        let expectedEdge = 0.44 * viewport.height / cropHeight
+        let measuredEdge = Double(edgeRow) / Double(redPreview.pixelsHigh)
+        try check("top_aligned_crop", abs(measuredEdge - expectedEdge) <= tolerance)
         if let overlay = panel.visibleWindow,
            let file = runtime.promptScreenScreenshot(host.window(), name: "tab-switcher-two-previews", overlay: overlay) {
             images["tab-switcher"] = file
@@ -428,6 +435,10 @@ final class TabSwitcherScreenCheck {
         }
         try await select(runtime, green)
         try await wait("closed tab with readback pending") { self.tab(runtime, handedItem) == nil }
+        try await wait("closed tab readback reported failure") {
+            self.hasEvent(mark: closeMark, live: handoffLive, source: "prehide", status: "failed",
+                          reasons: ["stale-document", "error"])
+        }
         try check("close_during_readback", hasEvent(mark: closeMark, live: handoffLive, source: "prehide", status: "requested") &&
                   !hasEvent(mark: closeMark, live: handoffLive, source: "prehide", status: "completed"))
     }
