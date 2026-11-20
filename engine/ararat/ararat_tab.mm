@@ -14,6 +14,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/functional/bind.h"
 #include "base/json/json_writer.h"
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/values.h"
 #include "base/strings/sys_string_conversions.h"
@@ -76,6 +77,11 @@
 - (BOOL)isHandlingKeyDown;
 @end
 
+@interface ARTab (SwitcherThumbnail)
+- (void)setSwitcherThumbnailReady:(BOOL)ready;
+- (void)setSwitcherThumbnailNavigating:(BOOL)navigating;
+@end
+
 namespace {
 NSDictionary* KeyboardIMEObservation(content::WebContents* contents, NSString* stage) {
   auto* render_view = contents->GetRenderWidgetHostView();
@@ -122,6 +128,14 @@ class TabContentsObserver : public content::WebContentsObserver,
       [[tab_ ownerHost] tabMetadataChanged:@"favicon" tab:tab_];
   }
   void DidFinishNavigation(content::NavigationHandle* navigation) override {
+    if (navigation == thumbnail_navigation_) {
+      thumbnail_navigation_ = nullptr;
+      [tab_ setSwitcherThumbnailNavigating:NO];
+      if (navigation->HasCommitted()) {
+        [tab_ setSwitcherThumbnailReady:navigation->IsServedFromBackForwardCache() ||
+                                        navigation->IsPrerenderedPageActivation()];
+      }
+    }
     if (navigation->HasCommitted() && navigation->IsInPrimaryMainFrame()) {
       const auto error = navigation->GetNetErrorCode();
       [tab_ setNetworkError:(navigation->IsErrorPage() && (error == net::ERR_NAME_NOT_RESOLVED || error == net::ERR_NAME_RESOLUTION_FAILED || error == net::ERR_INTERNET_DISCONNECTED)) ? error : 0];
@@ -131,7 +145,16 @@ class TabContentsObserver : public content::WebContentsObserver,
     }
   }
   void DidStartNavigation(content::NavigationHandle* navigation) override {
-    if (navigation->IsInPrimaryMainFrame() && !navigation->IsSameDocument()) { [[tab_ ownerHost] traceTabEvent:@"navigation-start" tab:tab_]; [tab_ refresh]; }
+    if (navigation->IsInPrimaryMainFrame() && !navigation->IsSameDocument()) {
+      thumbnail_navigation_ = navigation;
+      [tab_ setSwitcherThumbnailNavigating:YES];
+      [tab_ invalidateSwitcherThumbnail];
+      [[tab_ ownerHost] traceTabEvent:@"navigation-start" tab:tab_];
+      [tab_ refresh];
+    }
+  }
+  void OnFirstContentfulPaintInPrimaryMainFrame(base::TimeTicks) override {
+    if (!thumbnail_navigation_) [tab_ setSwitcherThumbnailReady:YES];
   }
   void DidStartLoading() override { [tab_ refresh]; }
   void DidStopLoading() override { [tab_ refresh]; }
@@ -151,6 +174,7 @@ class TabContentsObserver : public content::WebContentsObserver,
 
  private:
   __weak ARTab* tab_;
+  raw_ptr<content::NavigationHandle> thumbnail_navigation_ = nullptr;
   base::ScopedObservation<favicon::FaviconDriver, favicon::FaviconDriverObserver>
       favicon_observation_{this};
 };
@@ -167,6 +191,9 @@ class TabContentsObserver : public content::WebContentsObserver,
   BOOL loading_ui_;
   NSInteger network_error_;
   NSUInteger navigation_count_;
+  NSUInteger thumbnail_document_generation_;
+  BOOL thumbnail_ready_;
+  BOOL thumbnail_navigating_;
   BOOL check_opener_alive_;
   NSMutableArray<NSDictionary*>* check_ime_observations_;
   std::string screen_address_guid_;
@@ -755,6 +782,8 @@ class TabContentsObserver : public content::WebContentsObserver,
 }
 
 - (void)rendererCrashed {
+  thumbnail_ready_ = NO;
+  [self invalidateSwitcherThumbnail];
   [host_ tabMetadataChanged:@"crashed" tab:self];
 }
 
@@ -762,27 +791,69 @@ class TabContentsObserver : public content::WebContentsObserver,
   [host_ focusSplitTab:self];
 }
 
-- (void)captureSnapshot:(void (^)(NSImage*))completion {
-  auto* view = contents_ ? contents_->GetRenderWidgetHostView() : nullptr;
-  const auto check = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check");
-  bool trace = check == "transfer" || check == "transfer-ext";
+static void CopyTabSurface(content::WebContents* contents,
+                           content::RenderWidgetHostView* view,
+                           NSString* live_id, const gfx::Rect& crop,
+                           const gfx::Size& size, bool secure, bool trace,
+                           void (^completion)(NSImage*)) {
   if (trace) std::fprintf(stderr, "ararat-trace: transfer snapshot request view=%d surface=%d\n", view != nullptr, view && view->IsSurfaceAvailableForCopy());
   if (!view || !view->IsSurfaceAvailableForCopy()) { completion(nil); return; }
   auto runner = base::SingleThreadTaskRunner::GetCurrentDefault();
-  auto contents = contents_->GetWeakPtr();
-  std::string live = base::SysNSStringToUTF8(live_id_);
-  view->CopyFromSurface(gfx::Rect(), gfx::Size(320, 200), base::Milliseconds(250),
-      base::BindOnce(^(const content::CopyFromSurfaceResult& result) {
+  auto weak_contents = contents->GetWeakPtr();
+  std::string live = base::SysNSStringToUTF8(live_id);
+  auto copied = base::BindOnce(^(const content::CopyFromSurfaceResult& result) {
         SkBitmap bitmap = result.has_value() ? result->bitmap : SkBitmap();
         bool copyOK = result.has_value();
         runner->PostTask(FROM_HERE, base::BindOnce(^{
+          const bool same_live = weak_contents && AraratLiveIdForContents(weak_contents.get()) == live;
           if (trace) std::fprintf(stderr, "ararat-trace: transfer snapshot copy ok=%d contents=%d live_match=%d bitmap=%d\n",
-                                  copyOK, !!contents, contents && AraratLiveIdForContents(contents.get()) == live, !bitmap.empty());
-        NSImage* image = !contents || AraratLiveIdForContents(contents.get()) != live || bitmap.empty()
-              ? nil : gfx::Image::CreateFrom1xBitmap(bitmap).ToNSImage();
-          completion(image);
+                                  copyOK, !!weak_contents, same_live, !bitmap.empty());
+          completion(same_live && !bitmap.empty() ? gfx::Image::CreateFrom1xBitmap(bitmap).ToNSImage() : nil);
         }));
-      }));
+  });
+  if (secure)
+    view->CopyFromSurfaceSecure(crop, size, base::Milliseconds(250), std::move(copied));
+  else
+    view->CopyFromSurface(crop, size, base::Milliseconds(250), std::move(copied));
+}
+
+- (void)captureSnapshot:(void (^)(NSImage*))completion {
+  auto* view = contents_ ? contents_->GetRenderWidgetHostView() : nullptr;
+  const auto check = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check");
+  CopyTabSurface(contents_, view, live_id_, gfx::Rect(), gfx::Size(320, 200),
+                 false, check == "transfer" || check == "transfer-ext", completion);
+}
+
+- (void)captureSwitcherThumbnail:(void (^)(NSImage*))completion {
+  auto* view = contents_ ? contents_->GetRenderWidgetHostView() : nullptr;
+  if (!view || !thumbnail_ready_ || thumbnail_navigating_ || self.crashed ||
+      contents_->GetVisibility() != content::Visibility::VISIBLE) {
+    completion(nil);
+    return;
+  }
+  const gfx::Size viewport = view->GetVisibleViewportSize();
+  const int units = std::min(viewport.width() / 3, viewport.height() / 2);
+  if (!units) { completion(nil); return; }
+  const gfx::Rect crop((viewport.width() - units * 3) / 2, 0, units * 3, units * 2);
+  __weak ARTab* weak_tab = self;
+  const NSUInteger document = thumbnail_document_generation_;
+  CopyTabSurface(contents_, view, live_id_, crop, gfx::Size(312, 208),
+                 true, false, ^(NSImage* image) {
+    ARTab* tab = weak_tab;
+    if (!tab || document != tab->thumbnail_document_generation_) image = nil;
+    image.size = NSMakeSize(156, 104);
+    completion(image);
+  });
+}
+
+- (void)setSwitcherThumbnailReady:(BOOL)ready { thumbnail_ready_ = ready; }
+- (void)setSwitcherThumbnailNavigating:(BOOL)navigating { thumbnail_navigating_ = navigating; }
+
+- (void)invalidateSwitcherThumbnail {
+  ++thumbnail_document_generation_;
+  id<ARWindowHostDelegate> delegate = host_.delegate;
+  if ([delegate respondsToSelector:@selector(windowHost:invalidateSwitcherThumbnailForTab:)])
+    [delegate windowHost:host_ invalidateSwitcherThumbnailForTab:self];
 }
 
 - (BOOL)takePendingNavigation {
@@ -820,6 +891,7 @@ class TabContentsObserver : public content::WebContentsObserver,
 
 - (void)invalidate {
   if (!contents_) return;
+  [self invalidateSwitcherThumbnail];
   AraratCheckUnregisterBeforeUnload(base::SysNSStringToUTF8(live_id_), contents_);
   [self willChangeValueForKey:@"view"];
   contents_ = nullptr;
@@ -828,6 +900,9 @@ class TabContentsObserver : public content::WebContentsObserver,
 }
 
 - (void)replaceContents:(content::WebContents*)contents {
+  [self invalidateSwitcherThumbnail];
+  thumbnail_ready_ = NO;
+  thumbnail_navigating_ = NO;
   AraratCheckUnregisterBeforeUnload(base::SysNSStringToUTF8(live_id_), contents_);
   [self willChangeValueForKey:@"view"];
   network_error_ = 0;

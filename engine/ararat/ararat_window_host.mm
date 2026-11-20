@@ -4020,6 +4020,25 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   }
   [self queueExtensionActionsChanged];
   NSView* card = [self.delegate pageCardForWindowHost:self];
+  const bool shared = AraratUsesSharedCompositor() && !core_->devtools();
+  auto will_present = [&](content::WebContents* contents, NSString* item) {
+    return card && (contents == active ||
+        (!shared && !workspace_page_hidden_ && item && split_frames_[item]));
+  };
+  id<ARWindowHostDelegate> delegate = self.delegate;
+  if ([delegate respondsToSelector:@selector(windowHost:captureSwitcherThumbnailsForTabs:)]) {
+    NSMutableArray<id<ARTabAPI>>* outgoing = [NSMutableArray array];
+    for (const auto& [name, window] : core_->windows()) {
+      TabStripModel* strip = window->browser()->GetTabStripModel();
+      for (int i = 0; i < strip->count(); ++i) {
+        auto* contents = strip->GetWebContentsAt(i);
+        if (contents->GetVisibility() != content::Visibility::VISIBLE) continue;
+        ARTab* tab = tabs_[[NSValue valueWithPointer:contents]];
+        if (tab && !will_present(contents, tab.itemId)) [outgoing addObject:tab];
+      }
+    }
+    if (outgoing.count) [delegate windowHost:self captureSwitcherThumbnailsForTabs:outgoing];
+  }
   content::WebContents* active_devtools = active ? DevToolsWindow::GetInTabWebContents(active, nullptr) : nullptr;
   NSView* desired_devtools = active_devtools && card ? active_devtools->GetNativeView().GetNativeNSView() : nil;
   if (devtools_view_ != desired_devtools) {
@@ -4037,9 +4056,9 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
         [card addSubview:page_position_view_];
       }
     }
-    if (AraratUsesSharedCompositor() && !core_->devtools()) core_->AttachPage(active && card ? active->GetNativeView() : gfx::NativeView());
+    if (shared) core_->AttachPage(active && card ? active->GetNativeView() : gfx::NativeView());
   }
-  if (AraratUsesSharedCompositor() && !core_->devtools()) {
+  if (shared) {
     if (!devtools_view_ || !card) {
       [devtools_clip_ removeFromSuperview];
       devtools_clip_ = nil;
@@ -4080,10 +4099,10 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       if (contents == active && card) devtools->WasShown();
       else devtools->WasHidden();
     }
-    if (AraratUsesSharedCompositor() && !core_->devtools()) {
-      if (contents == active && card) contents->WasShown();
+    if (shared) {
+      if (will_present(contents, identity->item_id)) contents->WasShown();
       else contents->WasHidden();
-    } else if (card && (contents == active || (!workspace_page_hidden_ && identity->item_id && split_frames_[identity->item_id]))) {
+    } else if (will_present(contents, identity->item_id)) {
       if (!split_frames_.count) for (NSView* child in [card.subviews copy]) if (child != view && child != page_position_view_ && child != devtools_view_) [child removeFromSuperview];
       if (!split_frozen_ && view.superview != card) [card addSubview:view];
       if (view.isHidden) view.hidden = NO;

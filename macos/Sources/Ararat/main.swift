@@ -770,6 +770,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   }
   var adapter: EngineAdapter?
   let sidebarFaviconCache = SidebarFaviconCache()
+  var switcherUnloadedFavicons: [String: String] = [:]
   var isPrivateWindow = false
   var privatePointer: UInt?
   var privateProfile: String?
@@ -910,7 +911,14 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var incognitoPrivateLive = ""
   var incognitoPrivateProfile = ""
   var incognitoPrivateBrowser = ""
-  var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [])
+  var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: []) {
+    didSet {
+      guard let tabSwitcher else { return }
+      let previous = oldValue.spaces.first { $0.id == oldValue.shownSpaceId }
+      let shown = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
+      if previous?.id != shown?.id || previous?.profile != shown?.profile { tabSwitcher.cancel() }
+    }
+  }
   // A check that owns this window's profile (relaunch-pins' isolation child) keeps the snapshot
   // delivery from setting it back to the space the window shows.
   var profilePinned = false
@@ -1508,6 +1516,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
       host?.setExtensionAnchor(rect)
     }
     adapter.onSiteStateChanged = { [weak self] in self?.refreshSiteState() }
+    adapter.onSwitcherThumbnailsChanged = { [weak self] items in
+      self?.tabSwitcher?.refreshImages(items)
+    }
     adapter.onExtensionActionsChanged = { [weak self] in self?.refreshExtensionActions() }
     adapter.onWindowTitle = { [weak self] pageTitle in
       self.flatMap { Self.workspaceWindowTitle(pageTitle: pageTitle, snapshot: $0.snapshot) }
@@ -2660,6 +2671,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
 
   func refreshSidebarFavicons() {
     guard hasUsableHost, let host, let sidebar else { return }
+    let before = sidebar.favicons
     var live: [String: NSImage?] = [:]
     for tab in (host.tabs() as? [any ARTabAPI]) ?? [] {
       if let id = tab.itemId { live.updateValue(tab.favicon, forKey: id) }
@@ -2667,19 +2679,20 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let space = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
     let profile = isPrivateWindow ? nil : space?.profileName
     sidebarFaviconCache.useProfile(profile)
-    guard let space, let profile else {
+    if let space, let profile {
+      let existing = snapshot.spaces.filter { $0.profileName == profile }.flatMap {
+        $0.favorites + $0.pinned + $0.today
+      }
+      sidebar.favicons = sidebarFaviconCache.images(existing: existing, shown: sidebar.faviconRows(in: space.id),
+                                                   live: live, switcher: switcherUnloadedFavicons, request: { url, completion in
+        host.favicon(forPageURL: url, profileDirectory: profile, completion: completion)
+      }, changed: { [weak self] in
+        DispatchQueue.main.async { [weak self] in self?.refreshSidebarFavicons() }
+      })
+    } else {
       sidebar.favicons = live.compactMapValues { $0 }
-      return
     }
-    let existing = snapshot.spaces.filter { $0.profileName == profile }.flatMap {
-      $0.favorites + $0.pinned + $0.today
-    }
-    sidebar.favicons = sidebarFaviconCache.images(existing: existing, shown: sidebar.faviconRows(in: space.id),
-                                                 live: live, request: { url, completion in
-      host.favicon(forPageURL: url, profileDirectory: profile, completion: completion)
-    }, changed: { [weak self] in
-      DispatchQueue.main.async { [weak self] in self?.refreshSidebarFavicons() }
-    })
+    tabSwitcher?.refreshImages(Set(before.keys).union(sidebar.favicons.keys).filter { before[$0] !== sidebar.favicons[$0] })
   }
 
   func cycleTabs(backwards: Bool, holdForCheck: Bool = false) {
@@ -2687,13 +2700,23 @@ final class Runtime: NSObject, NSMenuItemValidation {
     guard hasUsableHost, let host, let workspace else { return }
     commandBarTrace("cycle-tabs backwards=\(backwards) hold=\(holdForCheck) key=\(NSApp.keyWindow?.windowNumber ?? -1) responder=\(NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "-") current=\(NSApp.currentEvent.map { "\($0.type.rawValue)/\($0.modifierFlags.rawValue)" } ?? "nil")")
     let space = snapshot.shownSpaceId
-    let switcher = TabSwitcher(parent: host.window(), backwards: backwards, bindings: keyBindings?.bindings ?? [], accent: spaceAccent) { [weak host] id in
-      (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id })?.favicon
-    }
+    let switcher = TabSwitcher(parent: host.window(), backwards: backwards, bindings: keyBindings?.bindings ?? [], accent: spaceAccent,
+      thumbnail: { [weak self, weak host] id in
+        guard self?.snapshot.shownSpaceId == space,
+              let tab = (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id }) else { return nil }
+        return self?.adapter?.switcherThumbnail(item: id, live: tab.liveId)
+      }, favicon: { [weak self, weak host] id in
+        guard self?.snapshot.shownSpaceId == space else { return nil }
+        if let tab = (host?.tabs() as? [any ARTabAPI])?.first(where: { $0.itemId == id }) { return tab.favicon }
+        return self?.sidebar?.favicons[id]
+      })
     tabSwitcher = switcher
     commandBarTrace("cycle-tabs created")
     switcher.onClose = { [weak self, weak switcher] in
-      if self?.tabSwitcher === switcher { self?.tabSwitcher = nil }
+      if self?.tabSwitcher === switcher {
+        self?.tabSwitcher = nil
+        self?.switcherUnloadedFavicons.removeAll()
+      }
       self?.commandBarTrace("cycle-tabs switcher closed")
     }
     switcher.onSelect = { [weak self] row in
@@ -2706,7 +2729,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
         switcher?.cancel()
         return
       }
-      let rows = (try? result.get()) ?? []
+      let recent = try? result.get()
+      self.switcherUnloadedFavicons = recent?.unloaded ?? [:]
+      if !self.switcherUnloadedFavicons.isEmpty { self.refreshSidebarFavicons() }
+      let rows = recent?.rows ?? []
       self.commandBarTrace("cycle-tabs rows=\(rows.count)")
       switcher.load(rows)
     }

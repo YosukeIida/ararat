@@ -1478,6 +1478,13 @@ pub struct WorkspaceSnapshot {
     pub spaces: Vec<SpaceSnapshot>,
 }
 
+#[derive(uniffi::Record)]
+pub struct SwitcherThumbnailSpace {
+    pub id: String,
+    pub profile: String,
+    pub items: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct WindowPresentation {
     pub frame: Option<LittleWindowFrame>,
@@ -2852,12 +2859,27 @@ impl WorkspaceStore {
 
     /// The shown space's most recently selected tabs, newest first, for the ⌃Tab switcher
     /// (U23 D4, D8): the same list an empty command bar shows.
-    pub fn recent_tabs(&self, window_id: String, limit: u32) -> Vec<Suggestion> {
+    pub fn recent_tabs(&self, window_id: String) -> Vec<Suggestion> {
         let mut workspace = self.workspace.lock().unwrap().clone();
         workspace.repair_tree();
-        ararat_core::command_bar::recent_tabs(&workspace, &window_id, limit as usize).into_iter().map(|s| Suggestion {
+        use ararat_core::command_bar::{recent_tabs, SWITCHER_LIMIT};
+        recent_tabs(&workspace, &window_id, SWITCHER_LIMIT).into_iter().map(|s| Suggestion {
             title: s.title, subtitle: s.subtitle, url: s.url, key: s.key.map(Into::into), score: s.score,
             target: s.target.into(),
+        }).collect()
+    }
+
+    pub fn switcher_thumbnail_spaces(&self, window_id: String) -> Vec<SwitcherThumbnailSpace> {
+        use ararat_core::command_bar::switcher_thumbnail_items;
+        let mut workspace = self.workspace.lock().unwrap().clone();
+        workspace.repair_tree();
+        workspace.spaces.iter().map(|space| SwitcherThumbnailSpace {
+            id: space.id.clone(),
+            profile: match &space.profile {
+                ararat_core::model::Profile::Default => "Default".into(),
+                ararat_core::model::Profile::Named(name) => name.clone(),
+            },
+            items: switcher_thumbnail_items(&workspace, &window_id, space),
         }).collect()
     }
 

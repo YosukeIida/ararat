@@ -27,6 +27,9 @@ private final class MatrixFakeTab: NSObject {
     }
     @objc(closeWithCommandId:) func close(_ command: String) { owner?.closed.append(command) }
     @objc(captureSnapshot:) func capture(_ completion: @escaping (NSImage?) -> Void) { owner?.captureCompletions.append(completion) }
+    @objc(captureSwitcherThumbnail:) func captureThumbnail(_ completion: @escaping (NSImage?) -> Void) {
+        owner?.thumbnailCompletions.append(completion)
+    }
 }
 
 @MainActor
@@ -56,6 +59,7 @@ private final class MatrixFakeHost: NSObject {
     var handoffAttempts = 0
     var failHandoffAt = 0
     var captureCompletions: [(NSImage?) -> Void] = []
+    var thumbnailCompletions: [(NSImage?) -> Void] = []
     var remotePlaceholder = false
     var incognitoOpens = 0
     lazy var fakeWindow: MatrixFakeWindow = {
@@ -142,6 +146,50 @@ private func matrixFake() -> (MatrixFakeHost, any ARWindowHostAPI) {
     class_addProtocol(MatrixFakeTab.self, objc_getProtocol("ARTabAPI")!)
     let fake = MatrixFakeHost()
     return (fake, fake as! any ARWindowHostAPI)
+}
+
+@Test @MainActor
+func privateSwitcherThumbnailStaysInMemoryAndNavigationInvalidatesIt() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let window = "private-thumbnail"
+    let live = "private-live"
+    let item = try session.queue.sync {
+        let store = WorkspaceStore.openPrivate(profile: .default)
+        session.store = store
+        let tab = LiveTab(offTheRecord: true, profile: .default, liveId: live, item: nil, opener: nil,
+                          navigated: true, url: "https://private.example/", title: "Private")
+        let change = try store.liveApply(transaction: LiveTransaction(offTheRecord: true, epoch: 1, rev: 0,
+            cause: .chrome, strips: [LiveStrip(window: window, tabs: [tab], active: live)]))
+        return try #require(change.adopted.first?.item)
+    }
+    let adapter = try EngineAdapter(path: dir.appendingPathComponent("workspace.sqlite").path,
+                                    windowID: window, card: NSView(), private: true, session: session)
+    let (fake, host) = matrixFake()
+    let tab = MatrixFakeTab(item: item, live: live, profile: "Default", owner: fake)
+    fake.entries = [tab]
+    adapter.attach(host)
+    defer { adapter.shutdown() }
+    let tabAPI = try #require(tab as? any ARTabAPI)
+    let image = NSImage(size: NSSize(width: 156, height: 104))
+
+    try #require(adapter.responds(to: #selector(ARWindowHostDelegate.windowHost(_:captureSwitcherThumbnailsForTabs:))))
+    try #require(adapter.responds(to: #selector(ARWindowHostDelegate.windowHost(_:invalidateSwitcherThumbnailForTab:))))
+    adapter.windowHost(host, captureSwitcherThumbnailsForTabs: [tabAPI])
+    try #require(fake.thumbnailCompletions.count == 1)
+    fake.thumbnailCompletions.removeFirst()(image)
+    #expect(adapter.switcherThumbnail(item: item, live: live) === image)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).isEmpty)
+
+    adapter.windowHost(host, captureSwitcherThumbnailsForTabs: [tabAPI])
+    adapter.windowHost(host, invalidateSwitcherThumbnailForTab: tabAPI)
+    #expect(adapter.switcherThumbnail(item: item, live: live) == nil)
+    try #require(fake.thumbnailCompletions.count == 1)
+    fake.thumbnailCompletions.removeFirst()(image)
+    #expect(adapter.switcherThumbnail(item: item, live: live) == nil)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).isEmpty)
 }
 
 @Test @MainActor

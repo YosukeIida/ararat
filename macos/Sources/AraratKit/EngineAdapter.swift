@@ -66,6 +66,8 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var splitPlaceholders: [String: RemotePlaceholderView] = [:]
     private var failureViews: [String: PageFailureView] = [:]
     private var displayedSelection: String?
+    private var switcherThumbnails = SwitcherThumbnailCache()
+    public var onSwitcherThumbnailsChanged: (@MainActor (Set<String>) -> Void)?
     private var dragBaseline: SplitPane?
     private var dragFactors: [SplitFactor]?
     private var dragSplit: String?
@@ -421,6 +423,55 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         // regular Browser. The engine sets the private directory itself.
         if let profile, !isPrivate { _ = host.setProfileDirectory(profile) }
         publish()
+    }
+
+    @MainActor
+    public func switcherThumbnail(item: String, live: String) -> NSImage? {
+        switcherThumbnails.image(item: item, live: live)
+    }
+
+    @MainActor
+    private func thumbnailImagesChanged(_ items: Set<String>) {
+        if !items.isEmpty { onSwitcherThumbnailsChanged?(items) }
+    }
+
+    @MainActor
+    private func reconcileSwitcherThumbnails() {
+        let spaces = queue.sync { store?.switcherThumbnailSpaces(windowId: windowID) ?? [] }
+        var scopes: [String: SwitcherThumbnailCache.Scope] = [:]
+        for space in spaces {
+            let scope = SwitcherThumbnailCache.Scope(profile: space.profile, space: space.id)
+            for item in space.items { scopes[item] = scope }
+        }
+        thumbnailImagesChanged(switcherThumbnails.reconcile(scopes))
+    }
+
+    public func windowHost(_ source: any ARWindowHostAPI, captureSwitcherThumbnailsForTabs tabs: [any ARTabAPI]) {
+        MainActor.assumeIsolated {
+            guard !selectionClosed, (source as AnyObject) === (host as AnyObject?) else { return }
+            reconcileSwitcherThumbnails()
+            for tab in tabs {
+                guard let item = tab.itemId,
+                      let key = switcherThumbnails.key(item: item, live: tab.liveId),
+                      let request = switcherThumbnails.begin(key) else { continue }
+                tab.captureSwitcherThumbnail { [weak self] image in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.reconcileSwitcherThumbnails()
+                        let current = self.tab(key.live)?.itemId == item
+                        if self.switcherThumbnails.finish(key, request: request, image: current ? image : nil) {
+                            self.thumbnailImagesChanged([item])
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    public func windowHost(_ source: any ARWindowHostAPI, invalidateSwitcherThumbnailForTab tab: any ARTabAPI) {
+        MainActor.assumeIsolated {
+            thumbnailImagesChanged(switcherThumbnails.invalidate(live: tab.liveId))
+        }
     }
 
     public func beginLittleWindowHandoff() {
@@ -1286,6 +1337,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         clearSplitHandles()
         host?.delegate = nil
         host = nil
+        switcherThumbnails = SwitcherThumbnailCache()
         queue.sync {
             do { try store?.flush() } catch { report(error) }
         }
@@ -1370,6 +1422,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         tracePrivate("snapshot selected=\(snapshot.selectedId ?? "nil") shownSpace=\(snapshot.shownSpaceId ?? "nil") active=\(host?.activeItemId() ?? "nil") current=\(current) generation=\(selectionGeneration) rows=\(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))")
         guard current else { tracePrivate("snapshot dropped reason=stale"); return }
         guard !selectionClosed, host?.isClosing() != true, host?.isClosingAll() != true else { tracePrivate("snapshot dropped reason=closing"); return }
+        if switcherThumbnails.hasImagesOrRequests { reconcileSwitcherThumbnails() }
         guard canPublishSnapshot?() != false else { tracePrivate("snapshot held"); needsSnapshotPublish = true; onSnapshotTrace?("snapshot-held"); return }
         needsSnapshotPublish = false
         displayedSelection = snapshot.selectedId

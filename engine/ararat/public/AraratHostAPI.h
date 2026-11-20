@@ -21,6 +21,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)focus;
 - (void)checkFlushHistory:(void (^)(BOOL written))completion;
 - (void)captureSnapshot:(void (^)(NSImage* _Nullable image))completion;
+- (void)captureSwitcherThumbnail:(void (^)(NSImage* _Nullable image))completion;
 @property(nonatomic, readonly, nullable) NSView* view;
 - (void)activateWithCommandId:(NSString*)commandId;
 - (void)closeWithCommandId:(NSString*)commandId;
@@ -93,6 +94,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)findBarHasFocusForWindowHost:(id<ARWindowHostAPI>)host;
 - (void)windowHost:(id<ARWindowHostAPI>)host findPageRectChanged:(NSRect)rect;
 @optional
+- (void)windowHost:(id<ARWindowHostAPI>)host captureSwitcherThumbnailsForTabs:(NSArray<id<ARTabAPI>>*)tabs;
+- (void)windowHost:(id<ARWindowHostAPI>)host invalidateSwitcherThumbnailForTab:(id<ARTabAPI>)tab;
 - (nullable NSString*)windowHost:(id<ARWindowHostAPI>)host windowTitleForPresentedPage:(nullable NSString*)pageTitle;
 - (void)tabCloseCancelled:(NSString*)itemId commandId:(NSString*)commandId;
 - (BOOL)isLittleWindowForWindowHost:(id<ARWindowHostAPI>)host;

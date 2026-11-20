@@ -25,6 +25,7 @@ final class SidebarFaviconCache {
     }
 
     func images(existing: [Row], shown: [Row], live: [String: NSImage?],
+                switcher: [String: String] = [:],
                 request: (_ url: String, _ completion: @escaping (NSImage?) -> Void) -> Bool,
                 changed: @escaping () -> Void) -> [String: NSImage] {
         var images = live.compactMapValues { $0 }
@@ -35,6 +36,7 @@ final class SidebarFaviconCache {
             entries.removeValue(forKey: url)
         }
         unloadedItems.removeAll(keepingCapacity: true)
+        for (item, url) in switcher where live[item] == nil { unloadedItems[item] = url }
         for row in existing where row.unloaded && live[row.id] == nil {
             unloadedItems[row.id] = row.url
         }
@@ -42,8 +44,9 @@ final class SidebarFaviconCache {
         entries = entries.filter { urls.contains($0.key) }
 
         var unavailable: Set<String> = []
-        for row in shown {
-            guard let url = row.url, unloadedItems[row.id] == url else { continue }
+        let visible = shown.compactMap { row in row.url.map { (row.id, $0) } }
+        for (item, url) in visible + Array(switcher) {
+            guard unloadedItems[item] == url else { continue }
             if entries[url] == nil, unavailable.insert(url).inserted {
                 let token = UUID()
                 entries[url] = .pending(token)

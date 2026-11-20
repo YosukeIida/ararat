@@ -697,7 +697,7 @@ final class HarnessDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         }
         adapter.recentTabs { [weak self, weak switcher] result in
             guard let self, let switcher, self.tabSwitcher === switcher, self.shownSpaceID == space else { switcher?.cancel(); return }
-            switcher.load((try? result.get()) ?? [])
+            switcher.load((try? result.get().rows) ?? [])
         }
         if NSApp.currentEvent?.modifierFlags.contains(.control) != true { switcher.commit() }
     }

@@ -737,6 +737,29 @@ fn recent_tabs_are_the_shown_space_s_mru_minus_the_current_tab_and_favourites() 
 }
 
 #[test]
+fn thumbnail_eligibility_tracks_the_recent_tabs_and_selection_until_close_or_archive() {
+    let mut ws = fixture();
+    ws.show_space("one", "space-work").unwrap();
+    let space = ws.spaces.iter().find(|space| space.id == "space-work").unwrap().clone();
+    let mut tabs = Vec::new();
+    for index in 0..8 {
+        ws.create_tab("one", &format!("https://tab-{index}.example/")).unwrap();
+        tabs.push(ws.selected("one").unwrap().to_owned());
+    }
+    ws.last_selected.clear();
+    for (rank, tab) in tabs.iter().enumerate() {
+        ws.last_selected.insert(tab.clone(), rank as u64 + 1);
+    }
+    let eligibility = |ws: &ararat_core::model::Workspace| command_bar::switcher_thumbnail_items(ws, "one", &space);
+    let expected: Vec<_> = tabs[2..7].iter().rev().chain([&tabs[7]]).cloned().collect();
+    assert_eq!(eligibility(&ws), expected);
+    ws.close_item(&tabs[6]).unwrap();
+    ws.archive_item(&tabs[5]).unwrap();
+    let expected: Vec<_> = tabs[..5].iter().rev().chain([&tabs[7]]).cloned().collect();
+    assert_eq!(eligibility(&ws), expected);
+}
+
+#[test]
 fn text_of_nothing_but_controls_behaves_like_an_empty_field() {
     // Review L2: a stray 0x10 (or NBSP, or a lone newline) cleans to nothing, so the bar shows no
     // typed row and no empty `q=` URL can be built.

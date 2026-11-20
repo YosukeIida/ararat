@@ -258,8 +258,19 @@ public final class WorkspaceAdapter: @unchecked Sendable {
     }
 
     /// The shown space's most recently selected tabs, newest first: the ⌃Tab switcher's list.
-    public func recentTabs(limit: UInt32 = 5, completion: @escaping Completion<[Suggestion]>) {
-        enqueue({ try self.opened().recentTabs(windowId: self.windowID, limit: limit) }, completion: completion)
+    public func recentTabs(completion: @escaping Completion<(rows: [Suggestion], unloaded: [String: String])>) {
+        enqueue({
+            let store = try self.opened()
+            let rows = store.recentTabs(windowId: self.windowID)
+            var unloaded: [String: String] = [:]
+            if !self.isPrivate {
+                for row in rows {
+                    guard case .tab(let id, _) = row.target, let url = row.url, store.liveTab(item: id) == nil else { continue }
+                    unloaded[id] = url
+                }
+            }
+            return (rows, unloaded)
+        }, completion: completion)
     }
 
     public func createTab(url: String, completion: @escaping Completion<Change>) {

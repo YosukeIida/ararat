@@ -178,6 +178,7 @@ extension Runtime {
       step(11, "control tab")
     case 11:
       guard let switcher = tabSwitcher, !switcher.rows.isEmpty else { return }
+      if screen && switcher.visibleWindow == nil { return }
       capture("tab-switcher", switcher.visibleWindow)
       if screen { key(59, chars: "", type: .flagsChanged, post: true) } else { switcher.commit() }
       step(12, "release control")

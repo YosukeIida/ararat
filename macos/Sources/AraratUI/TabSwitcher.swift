@@ -6,6 +6,7 @@ public final class TabSwitcher {
     public private(set) var rows: [Suggestion] = []
     public private(set) var selectedIndex = 0
     public private(set) var isOpen = true
+    private(set) var isRevealed = false
     public var onSelect: (Suggestion) -> Void = { _ in }
     public var onClose: () -> Void = {}
     private let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -17,13 +18,34 @@ public final class TabSwitcher {
     private var offset: Int
     private var awaitingRows = true
     private var commitPending = false
+    private var revealDelayElapsed = false
     private let favicon: (String) -> NSImage?
+    private let thumbnail: (String) -> NSImage?
     private let accent: NSColor
     private let hints: [String]
+    private struct TileImages {
+        let preview: NSView
+        let picture: NSImageView
+        let favicon: NSImageView
+    }
+    private var tileImages: [String: TileImages] = [:]
 
-    public init(parent: NSWindow, backwards: Bool, bindings: [KeyBinding], accent: NSColor, favicon: @escaping (String) -> NSImage?) {
+    public convenience init(parent: NSWindow, backwards: Bool, bindings: [KeyBinding], accent: NSColor,
+                            thumbnail: @escaping (String) -> NSImage? = { _ in nil },
+                            favicon: @escaping (String) -> NSImage?) {
+        self.init(parent: parent, backwards: backwards, bindings: bindings, accent: accent,
+                  thumbnail: thumbnail, favicon: favicon, schedule: { delay, reveal in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: reveal)
+        })
+    }
+
+    init(parent: NSWindow, backwards: Bool, bindings: [KeyBinding], accent: NSColor,
+         thumbnail: @escaping (String) -> NSImage? = { _ in nil },
+         favicon: @escaping (String) -> NSImage?,
+         schedule: (TimeInterval, @escaping @MainActor @Sendable () -> Void) -> Void) {
         self.parent = parent
         self.favicon = favicon
+        self.thumbnail = thumbnail
         self.accent = accent
         let steps = [("cycle_tabs_next", "Next"), ("cycle_tabs_previous", "Previous")]
         hints = steps.compactMap { step -> String? in
@@ -54,6 +76,11 @@ public final class TabSwitcher {
         deactivate = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.cancel() }
         }
+        schedule(0.15) { [weak self] in
+            guard let self else { return }
+            self.revealDelayElapsed = true
+            self.revealIfReady()
+        }
     }
 
     public func load(_ rows: [Suggestion]) {
@@ -63,15 +90,15 @@ public final class TabSwitcher {
         guard !self.rows.isEmpty else { cancel(); return }
         selectedIndex = ((offset % self.rows.count) + self.rows.count) % self.rows.count
         if commitPending { commit(); return }
-        draw()
+        revealIfReady()
     }
 
     public func advance(backwards: Bool) {
-        guard isOpen else { return }
+        guard isOpen, !commitPending else { return }
         offset += backwards ? -1 : 1
         guard !rows.isEmpty else { return }
         selectedIndex = ((offset % rows.count) + rows.count) % rows.count
-        draw()
+        if isRevealed { draw() }
     }
 
     public func commit() {
@@ -85,6 +112,8 @@ public final class TabSwitcher {
     public func cancel() {
         guard isOpen else { return }
         isOpen = false
+        isRevealed = false
+        tileImages.removeAll()
         if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
         if let deactivate { NotificationCenter.default.removeObserver(deactivate); self.deactivate = nil }
         if let resignKey { NotificationCenter.default.removeObserver(resignKey); self.resignKey = nil }
@@ -93,13 +122,38 @@ public final class TabSwitcher {
         onClose()
     }
 
+    private func revealIfReady() {
+        guard isOpen, !isRevealed, !commitPending, revealDelayElapsed, !rows.isEmpty else { return }
+        isRevealed = true
+        draw()
+    }
+
+    public func refreshImages(_ items: Set<String>) {
+        guard isOpen, isRevealed, panel.isVisible else { return }
+        for item in items {
+            if let tile = tileImages[item] { updateImages(for: item, tile: tile) }
+        }
+    }
+
+    private func updateImages(for item: String?, tile: TileImages) {
+        let icon = item.flatMap(favicon) ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+        let preview = item.flatMap(thumbnail)
+        tile.favicon.image = icon
+        let bounds = tile.preview.bounds
+        let size = min(22, bounds.width, bounds.height)
+        tile.picture.frame = preview == nil
+            ? NSRect(x: bounds.midX - size / 2, y: bounds.midY - size / 2, width: size, height: size)
+            : bounds
+        tile.picture.image = preview ?? icon
+    }
+
     private func draw() {
         guard let parent else { cancel(); return }
         guard parent.isVisible, let overlay = makeOverlay() else { return }
         panel.contentView = overlay.content
         panel.setFrame(overlay.frame, display: true)
         if panel.parent == nil { parent.addChildWindow(panel, ordered: .above) }
-        panel.orderFront(nil)
+        if !panel.isVisible { panel.orderFront(nil) }
     }
 
     func makeOverlay() -> (content: NSView, frame: NSRect)? {
@@ -127,13 +181,19 @@ public final class TabSwitcher {
         let hintHeight = pills[0].frame.height
         let hintRowGap = CommandBarMetrics.hintPaddingY
         let panelY = CGFloat(hintRows.count) * (hintHeight + hintRowGap) - hintRowGap + 12
-        let tilePadding: CGFloat = 12
-        let tileGap: CGFloat = 8
+        let tilePadding: CGFloat = 10
+        let tileGap: CGFloat = 4
+        let labelHeight: CGFloat = 16
+        let previewGap: CGFloat = 13
         let tileSpacing = 2 * tilePadding + CGFloat(rows.count - 1) * tileGap
-        let tileWidth = min(144, max(0, (window.width - tileSpacing) / CGFloat(rows.count)))
+        let tileWidth = min(172, max(0, (window.width - tileSpacing) / CGFloat(rows.count)))
+        let inset = min(8, tileWidth / 2)
+        let previewWidth = tileWidth - 2 * inset
+        let previewHeight = previewWidth * 104 / 156
+        let tileHeight = 16 + labelHeight + previewGap + previewHeight
         let panelWidth = CGFloat(rows.count) * tileWidth + tileSpacing
         let width = max(panelWidth, hintRows.map(hintWidth).max() ?? 0)
-        let panelHeight: CGFloat = 136
+        let panelHeight = tileHeight + 2 * tilePadding
         let frame = NSRect(x: window.midX - width / 2, y: window.midY - panelHeight / 2 - panelY,
                            width: width, height: panelHeight + panelY)
         let content = NSView(frame: NSRect(origin: .zero, size: frame.size))
@@ -145,22 +205,41 @@ public final class TabSwitcher {
         background.wantsLayer = true
         background.layer?.cornerRadius = 14
         background.layer?.masksToBounds = true
+        tileImages.removeAll(keepingCapacity: true)
         for (index, row) in rows.enumerated() {
             let tile = NSView(frame: NSRect(x: tilePadding + CGFloat(index) * (tileWidth + tileGap),
-                                          y: tilePadding, width: tileWidth, height: 112))
+                                          y: tilePadding, width: tileWidth, height: tileHeight))
             tile.identifier = NSUserInterfaceItemIdentifier("tab-switcher-tile")
             tile.wantsLayer = true
             tile.layer?.cornerRadius = 10
             tile.layer?.backgroundColor = (index == selectedIndex ? accent : NSColor.clear).cgColor
-            let iconSize = min(32, tileWidth)
-            let icon = NSImageView(frame: NSRect(x: (tileWidth - iconSize) / 2, y: 54, width: iconSize, height: iconSize))
-            if case .tab(let id, _) = row.target { icon.image = favicon(id) }
-            if icon.image == nil { icon.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil) }
+            let preview = NSView(frame: NSRect(x: inset, y: 8 + labelHeight + previewGap,
+                                               width: previewWidth, height: previewHeight))
+            preview.identifier = NSUserInterfaceItemIdentifier("tab-switcher-preview")
+            preview.wantsLayer = true
+            preview.layer?.cornerRadius = 6
+            preview.layer?.masksToBounds = true
+            preview.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            let picture = NSImageView()
+            picture.imageScaling = .scaleProportionallyUpOrDown
+            preview.addSubview(picture)
+            let iconWidth = min(labelHeight, previewWidth)
+            let icon = NSImageView(frame: NSRect(x: inset, y: 8, width: iconWidth, height: labelHeight))
+            icon.imageScaling = .scaleProportionallyUpOrDown
+            let images = TileImages(preview: preview, picture: picture, favicon: icon)
+            var item: String?
+            if case .tab(let id, _) = row.target {
+                item = id
+                tileImages[id] = images
+            }
+            updateImages(for: item, tile: images)
             let title = NSTextField(labelWithString: row.title)
+            title.font = .systemFont(ofSize: 12)
             title.textColor = index == selectedIndex ? SpaceAccent.foreground(on: accent) : .labelColor
-            title.alignment = .center
             title.lineBreakMode = .byTruncatingTail
-            title.frame = NSRect(x: 8, y: 17, width: max(0, tileWidth - 16), height: 24)
+            let titleOffset = min(previewWidth, iconWidth + 6)
+            title.frame = NSRect(x: inset + titleOffset, y: 8, width: previewWidth - titleOffset, height: labelHeight)
+            tile.addSubview(preview)
             tile.addSubview(icon)
             tile.addSubview(title)
             background.addSubview(tile)
