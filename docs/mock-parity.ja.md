@@ -8,7 +8,7 @@
 
 76 ページから抽出した CSS 宣言の候補は 27,782 件で、118 件を確認し、27,664 件の分類が残った。集計では、ファイル名と行番号、セレクタ、プロパティ名、CSS の値の組み合わせを 1 件と数え、照合元の記述と一致することを検査する。候補には、ページ間で共有する規則、注釈、インラインで指定した状態差、未実装画面の値も含む。この件数は残りの候補数の上限であり、Swift に対応付ける必要がある件数は未確定である。
 
-下の台帳には 109 行ある。各行を状態別に 1 件と数えると、一致 42 件、未解決の相違 23 件、修正済みで VM 再確認待ち 27 件、承認済みの相違 5 件、判定不能 3 件、未実装 9 件である。
+下の台帳には 113 行ある。各行を状態別に 1 件と数えると、一致 42 件、未解決の相違 24 件、修正済みで VM 再確認待ち 29 件、承認済みの相違 6 件、判定不能 3 件、未実装 9 件である。
 
 
 ```sh
@@ -136,7 +136,11 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `E-General` | 既定ブラウザ、起動時の動作、ダウンロード | `settings-general-general` | 相違 | `settings-general-general` には Warn before quitting がある。Search と Language のグループ、Downloads 行のパス、既定のブラウザー行の右端の操作または状態表示がない（決定 91）。 |
 | `E-General` | General の残りの設定 | — | 未実装 | 検索候補、検索エンジン、スペルチェックは後の実装とする（§7）。 |
 | `E-LittleWindow` | ショートカット、移動先、閉じる動作、サイズと位置の保持 | `settings-little-window-little-window` | 一致 | `settings-little-window-little-window` で決定 99 の順序どおりに 5 行と各コントロールを確認した。ショートカットとスイッチの状態はフィクスチャの値である。 |
-| `E-Passwords` | パスワードマネージャーのスイッチ、保存済みパスワード、Touch ID | `passwords` | 相違 | プロファイルごとのスイッチを実装した。一覧、詳細と Touch ID はネイティブペインの後続単位で実装する。Arc 取り込みは別単位とする。VM での確認待ち。 |
+| `E-Passwords` | プロファイルごとのスイッチ、保存済みパスワードと認証 | `passwords` | 修正済み、VM 再確認待ち | 検索欄と追加ボタンは一覧カードの上に置き、一覧が空なら追加ボタンを残す。Chromium が生体認証の利用を記録すると Fill passwords を表示し、変更のたびに端末認証を求める。VM 用の検査は認証を模擬し、実機の Touch ID は未確認である。 |
+| `E-Passwords` | ログイン情報の詳細 | `passwords` | 修正済み、VM 再確認待ち | ユーザー名とパスワードは詳細ページで編集する。表示中のパスワードは選択して macOS の標準操作でコピーできる。Web サイトは対象プロファイルで開き、Delete はログイン情報を削除する。 |
+| `E-Passwords` | Save Changes | — | 相違（承認済み） | ユーザー名かパスワードを編集すると Save Changes が表示される。モックではこのボタンが省かれている。 |
+| `E-Passwords` | Import from Arc | — | 相違 | Arc からのパスワード取り込みは単位 (c) で追加する。 |
+| `E-Passwords` | 保存・更新の確認 | — | 相違 | Offer to save は Chromium の設定値を変更する。保存・更新の確認は単位 (d) で実装する。 |
 | `E-Privacy` | 閲覧データの消去、保持期間、Cookie とプライバシー設定 | `settings-privacy-privacy`, `settings-privacy-privacy-sheet` | 相違 | `settings-privacy-privacy` には仕様検討中の Protection 機能がない（決定 97）。`settings-privacy-sheet` は Cancel に塗りがあり、Clear Data を Clear と表示し、プロファイルを固定ラベルで示し、Site permissions のチェックボックスがない。 |
 | `E-Privacy` | ブロッカーと危険なサイトの警告 | — | 未実装 | 方式と情報源は未決定である（§14）。 |
 | `E-Search` | 設定内検索と該当項目の強調 | `settings-search-search`, `settings-search-search-cleared` | 一致 | `settings-search-search` と `settings-search-search-cleared` で、レールに代わる検索結果、先頭結果の選択、対象行にスクロールした後の灰色の強調表示を確認した。 |
@@ -147,7 +151,7 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `E-Tabs` | タブ設定とスペースへの移動 | `settings-tabs-settings-tabs`, `settings-spaces-space-page` | 修正済み、VM 再確認待ち | `settings-tabs-settings-tabs` に 2 行ともある。Archive Today’s tabs after のポップアップは内容に合わせた幅（モックでは 110 pt）で、行の右端に他の右寄せコントロールと同じく揃う。幅と位置はオフスクリーンのテストで確認する。 |
 | `E-Websites` | 既定とサイト別の権限 | `settings-websites-websites`, `settings-websites-site-row`, `settings-websites-site-page` | 相違 | `settings-websites-websites` の既定値の一覧は一致する。`settings-websites-site-page` は上書きした Camera のみを表示する（モックは全権限を並べる。決定 94）。Clear… は Delete Space と同じボードの赤になり、オフスクリーンのテストが描画後の画素を読む。 |
 | `Extensions` | ピン留めした拡張機能の概要 | `ext-actions-action`, `ext-actions-overflow` | 一致 | `ext-actions-action` では固定アクションが URL 欄にあり、ヘッダーにはない（決定 42）。概要図のアクションメニューと権限プロンプトは撮影待ちである。 |
-| `F-Import` | インポート対象の選択、進捗、完了 | `onboarding (what-to-import, progress, done)` | 相違 | フィクスチャを使うフローでは、ログイン状態、パスワード、履歴、アーカイブの行を省いている（§7）。 |
+| `F-Import` | インポート対象の選択、進捗、完了 | `onboarding (what-to-import, progress, done)` | 相違 | フィクスチャを使うフローでは、ログイン状態、パスワード、履歴、アーカイブの行を省いている（§7）。Arc のパスワード取り込みは単位 (c) で扱う。 |
 | `F-Import` | ログイン状態の引き継ぎとキーチェーン権限 | — | 未実装 | キーチェーンを使うフローにはインポートの調査が必要である（決定 105–106）。 |
 | `F-LookControls` | 透明度、Glass のデテント、粒状感、メニュー | `look-55-popover`, `look-detent-popover`, `look-glass-popover` | 一致 | VM capture design-rowcontrast-1, `look-55-popover`、`look-detent-popover`、`look-glass-popover` で、外観選択、波形、デテント、点灯した Glass ソケット、Grain ノブを確認した（決定 107、108、113）。Transparency 欄にはネイティブの青いフォーカス枠が残り、モックの描画には未展開のラベルがあり、… メニューは撮影待ちである。 |
 | `F-LookGallery` | プリセットとカラーピッカー | `look-55-popover` | 判定不能 | `look-55-popover` で極座標の色選択欄、チップのページ切替、色数を確認した（決定 109）。モックの描画がほぼ空で、照合には正常なモック画像が必要である。 |

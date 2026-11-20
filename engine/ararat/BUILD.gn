@@ -63,9 +63,11 @@ source_set("passwords") {
     "//base",
     "//chrome/browser:browser_process",
     "//chrome/browser/affiliations",
+    "//chrome/browser/device_reauth",
     "//chrome/browser/password_manager/factories",
     "//chrome/browser/profiles:profile",
     "//chrome/browser/profiles:profile_manager",
+    "//components/device_reauth",
     "//components/password_manager/core/browser",
     "//components/password_manager/core/browser/password_store:password_store_interface",
     "//components/password_manager/core/browser/ui",
@@ -73,6 +75,7 @@ source_set("passwords") {
     "//components/prefs",
     "//content/public/browser",
     "//content/public/common",
+    "//crypto",
     "//url",
   ]
 }

@@ -77,6 +77,11 @@ if CommandLine.arguments.contains(where: { ["--ararat-check=atc-routing", "--ara
   }
 }
 
+if CommandLine.arguments.contains("--ararat-check=passwords"),
+   !PasswordsStoreCheck.validArguments(CommandLine.arguments) {
+  fail("passwords check requires one scratch profile, one scratch database and --use-mock-keychain")
+}
+
 if let check = CommandLine.arguments.first(where: { $0 == "--ararat-check=relaunch" || $0 == "--ararat-check=crash" || $0 == "--ararat-check=relaunch-pins" || $0 == "--ararat-check=relaunch-windows" || $0 == "--ararat-check=relaunch-windows-new" || $0 == "--ararat-check=private-durability" }) {
   if check == "--ararat-check=private-durability" { exit(runPrivateDurabilityDriver()) }
   exit(runRelaunchDriver(check == "--ararat-check=relaunch-pins" ? "pins" : String(check.dropFirst(15))))
@@ -578,6 +583,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var externalURLs: [(url: String, untrusted: Bool)] = []
   var openingExternalURL = false
   var atcRoutingCheck: ATCRoutingCheck?
+  var passwordsStoreCheck: PasswordsStoreCheck?
 
   enum ExternalDestination: Equatable {
     case space(String, String)
@@ -1530,9 +1536,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     adapter.onSnapshot = { [weak self, weak container] snapshot in
       guard self?.host?.isClosing() != true, self?.host?.isClosingAll() != true else { return }
+      let previous = self?.snapshot
       self?.snapshot = snapshot
       self?.updatePageVisibility(snapshot)
-      if let self, (self.root ?? self).settingsOwner === self { (self.root ?? self).settings?.modelUpdate(snapshot: snapshot) }
+      self?.updateSettingsSnapshot(previous: previous)
       if self?.isPrivateWindow != true, self?.host?.isClosingAll() != true, self?.profilePinned != true,
          let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }) {
         // A check that pinned this window's profile (relaunch-pins' isolation child) keeps it:
@@ -1939,12 +1946,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
   }
 
   func show(_ snapshot: WorkspaceSnapshot) {
+    let previous = self.snapshot
     self.snapshot = snapshot
     let accent = spaceAccent
     commandPresenter?.controller.highlight = accent
     adapter?.updateFailureAccent(accent)
     updatePageVisibility(snapshot)
-    if (root ?? self).settingsOwner === self { (root ?? self).settings?.modelUpdate(snapshot: snapshot) }
+    updateSettingsSnapshot(previous: previous)
     updateSidebar(snapshot)
     refreshSidebarRowState(snapshot)
     container?.selectionChanged()
@@ -2425,18 +2433,16 @@ final class Runtime: NSObject, NSMenuItemValidation {
     key ?? regular.first ?? root
   }
 
-  func passwordsHandle(profile: String, loaded: ((any ARPasswordsAPI) -> Void)? = nil) -> (any ARPasswordsAPI)? {
-    guard let symbol = dlsym(Launcher.handle, "AraratPasswords") else { return nil }
+  func passwordsHandle(profile: String, loaded: (((any ARPasswordsAPI)?) -> Void)? = nil) -> (any ARPasswordsAPI)? {
+    guard let symbol = dlsym(Launcher.handle, "AraratPasswords") else { loaded?(nil); return nil }
     return Self.openPasswords(symbol, profile: profile, loaded: loaded)
   }
 
   static func openPasswords(_ symbol: UnsafeMutableRawPointer, profile: String,
-                            loaded: ((any ARPasswordsAPI) -> Void)?) -> (any ARPasswordsAPI)? {
+                            loaded: (((any ARPasswordsAPI)?) -> Void)?) -> (any ARPasswordsAPI)? {
     // A Swift-declared C function type with an optional block can pass a Swift thunk as the block.
     let open = unsafeBitCast(symbol, to: AraratPasswordsFunction.self)
-    return open(profile, loaded.map { reply in
-      { passwords in if let passwords { reply(passwords) } }
-    })
+    return open(profile, loaded)
   }
 
   func openSettings(spaceID: String? = nil, passwordsProfile: String? = nil) {
@@ -2463,16 +2469,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       snapshot.spaces.first(where: { $0.id == id })?.profileName
     }
     let passwordProfile = passwordsProfile ?? shownProfile ?? host?.profileDirectory()
-    owner.settings?.configurePasswords(profile: passwordProfile) { ready in
-      guard let passwordProfile else { return }
-      let install: (any ARPasswordsAPI) -> Void = { passwords in
-        ready(passwords.enabled, { enabled in
-          _ = passwords.setManagerEnabled(enabled)
-          return passwords.enabled
-        }, { passwords.invalidate() })
-      }
-      if let passwords = passwordsHandle(profile: passwordProfile, loaded: install) { install(passwords) }
-    }
+    configureSettingsPasswords(owner.settings, profile: passwordProfile)
     owner.settings?.setAbout(updater: AppUpdates.attached(to: NSApp.delegate)) { [weak self] in
       guard let self, hasUsableHost, let host else { return }
       adapter?.openCommandURL("chrome://credits/", expectedSpace: snapshot.shownSpaceId, profile: host.profileDirectory())
@@ -2553,6 +2550,34 @@ final class Runtime: NSObject, NSMenuItemValidation {
       owner.settings?.prepare(shownSpaceID: spaceID ?? snapshot.shownSpaceId, passwords: passwordsProfile != nil)
     } else {
       owner.settings?.open(shownSpaceID: spaceID ?? snapshot.shownSpaceId, passwords: passwordsProfile != nil)
+    }
+  }
+
+  private func configureSettingsPasswords(_ settings: SettingsWindowController?, profile: String?) {
+    settings?.configurePasswords(profile: profile, openWebsite: { [weak self] url in
+      guard let self, let profile, let adapter, let workspace else { return }
+      let shownSpace = snapshot.shownSpaceId
+      if snapshot.spaces.first(where: { $0.id == shownSpace })?.profileName == profile {
+        adapter.openCommandURL(url, expectedSpace: shownSpace, profile: profile)
+      } else if let space = snapshot.spaces.first(where: { $0.profileName == profile }) {
+        workspace.showSpace(id: space.id) { _ in
+          adapter.openCommandURL(url, expectedSpace: space.id, profile: profile)
+        }
+      }
+    }) { ready in
+      guard let profile else { return }
+      if let passwords = passwordsHandle(profile: profile, loaded: ready) { ready(passwords) }
+    }
+  }
+
+  private func updateSettingsSnapshot(previous: WorkspaceSnapshot?) {
+    let owner = root ?? self
+    guard owner.settingsOwner === self, let settings = owner.settings else { return }
+    settings.modelUpdate(snapshot: snapshot)
+    let oldProfile = previous?.spaces.first(where: { $0.id == previous?.shownSpaceId })?.profileName
+    let newProfile = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId })?.profileName
+    if let configured = settings.passwordsProfile, oldProfile != newProfile, configured != newProfile {
+      configureSettingsPasswords(settings, profile: newProfile)
     }
   }
 
@@ -3520,7 +3545,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     if mode == "passwords" {
       browserCheckAttempts += 1
       if browserCheckAttempts > 120 {
-        finishBrowserCheck(ok: false, values: ["check": mode, "timeout_phase": browserCheckPhase])
+        finishBrowserCheck(ok: false, values: ["check": mode, "timeout_phase": browserCheckPhase,
+          "unverified": ["real Touch ID"]])
       } else if let host {
         passwordCheckTick(host)
       }
@@ -8100,9 +8126,17 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       host.checkNavigate("chrome://password-manager/passwords", disposition: "current")
       browserCheckPhase = 5
     case 5:
-      guard (root ?? self).settings?.isShowingPasswords() == true else { return }
-      finishBrowserCheck(ok: true, values: ["check": "passwords", "profile_independence": true,
-        "regular_gates": true, "private_gates": true, "settings_redirect": true])
+      guard (root ?? self).settings?.isShowingPasswords() == true,
+            let handle = passwordsHandle(profile: "Profile 1") else { return }
+      if passwordsStoreCheck == nil {
+        passwordsStoreCheck = PasswordsStoreCheck(handle: handle) { [weak self] passed, conditions in
+          self?.finishBrowserCheck(ok: passed,
+            values: ["check": "passwords", "profile_independence": true,
+              "regular_gates": true, "private_gates": true, "settings_redirect": true,
+              "store": conditions, "unverified": ["real Touch ID"]])
+        }
+      }
+      passwordsStoreCheck?.tick()
     default:
       break
     }

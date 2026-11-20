@@ -28,39 +28,6 @@ private let settingsPaneIDs = [
 private let builtSettingsPaneIDs = settingsPaneIDs.filter { $0 != "sync" }
 
 @Test @MainActor
-func passwordsSwitchUsesTheCurrentProfileAfterRetargeting() {
-    let model = settingsTestModel()
-    let settings = SettingsWindowController(model: model, orderWindowFront: { _ in })
-    var finishFirstLoad: (() -> Void)?
-    var firstClosed = false
-    settings.configurePasswords(profile: "Default") { ready in
-        finishFirstLoad = { ready(false, { _ in false }, { firstClosed = true }) }
-    }
-
-    var enabled = true
-    var secondClosed = false
-    settings.configurePasswords(profile: "Profile 1") { ready in
-        ready(enabled, {
-            enabled = $0
-            return enabled
-        }, { secondClosed = true })
-    }
-    finishFirstLoad?()
-    settings.prepare(shownSpaceID: nil, passwords: true)
-
-    #expect(settings.isShowingPasswords())
-    #expect(model.passwordProfile == "Profile 1")
-    #expect(model.passwordManagerEnabled == true)
-    #expect(model.setPasswordManager?(false) == false)
-    #expect(!enabled)
-    #expect(!firstClosed)
-
-    settings.configurePasswords(profile: nil) { _ in }
-    #expect(secondClosed)
-    #expect(model.passwordManagerEnabled == nil)
-}
-
-@Test @MainActor
 func theProbeSeesTheFrameTheRailAndTheHitTheScreenCheckReads() async throws {
     _ = NSApplication.shared
     let spaces = [settingsTestSpace("a", title: "Alpha"), settingsTestSpace("b", title: "Beta")]
