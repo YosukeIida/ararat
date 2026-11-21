@@ -130,6 +130,7 @@ fn folder_restore_preserves_position_replays_and_survives_reopen() {
         if archived { ws.archive_item("tab-a").unwrap(); }
         else { ws.items.get_mut("folder-docs").unwrap().membership.parent = Some("today-work".into()); ws.close_item("tab-a").unwrap(); }
         let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("folder-restore-{archived}.sqlite"));
+        for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
         let (store, _) = Store::open(&path).unwrap(); store.write(ws.to_ops()); store.flush().unwrap(); drop(store);
         ws = Store::open(&path).unwrap().1;
         let before = ws.clone();
