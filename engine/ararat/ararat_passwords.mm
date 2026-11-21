@@ -209,8 +209,9 @@ bool IsScratchPasswordProfile(const base::FilePath& path) {
 }
 
 - (BOOL)checkHadBiometricsAvailable {
-  return g_browser_process->local_state()->GetBoolean(
-      password_manager::prefs::kHadBiometricsAvailable);
+  auto* local_state = g_browser_process ? g_browser_process->local_state() : nullptr;
+  return local_state &&
+         local_state->GetBoolean(password_manager::prefs::kHadBiometricsAvailable);
 }
 
 - (void)setAuthenticatesBeforeFilling:(BOOL)enabled
