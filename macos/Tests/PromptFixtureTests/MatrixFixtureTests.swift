@@ -62,6 +62,9 @@ private final class MatrixFakeHost: NSObject {
     var transferAttempts = 0
     var handoffAttempts = 0
     var failHandoffAt = 0
+    var refuseHandoff = false
+    var closeRequests = 0
+    var onSetProfile: (() -> Void)?
     var captureCompletions: [(NSImage?) -> Void] = []
     var thumbnailCompletions: [(retry: Bool, finish: (NSImage?, Bool) -> Bool)] = []
     var remotePlaceholder = false
@@ -79,7 +82,12 @@ private final class MatrixFakeHost: NSObject {
     @objc func isClosingAll() -> Bool { closingAll }
     @objc func window() -> NSWindow { fakeWindow }
     @objc func profileDirectory() -> String { shownProfile }
-    @objc(setProfileDirectory:) func setProfile(_ name: String) -> Bool { shownProfile = name; return true }
+    @objc(setProfileDirectory:) func setProfile(_ name: String) -> Bool {
+        shownProfile = name
+        onSetProfile?()
+        return true
+    }
+    @objc func close() { closeRequests += 1 }
     @objc func activeItemId() -> String? { active }
     @objc func tabs() -> [Any] { entries }
     @objc func checkCreateIncognito() { incognitoOpens += 1 }
@@ -118,7 +126,7 @@ private final class MatrixFakeHost: NSObject {
     }
     @objc(handoffTab:activate:) func handoff(_ value: AnyObject, activate: Bool) -> Bool {
         handoffAttempts += 1
-        if handoffAttempts == failHandoffAt { return false }
+        if refuseHandoff || handoffAttempts == failHandoffAt { return false }
         return move(value, activate: activate, command: "handoff")
     }
     private func move(_ value: AnyObject, activate: Bool, command: String) -> Bool {
@@ -422,8 +430,8 @@ func synchronousSplitSelectionUpdatesURLAndCopyBeforeActivation() async throws {
 }
 
 @MainActor
-private func matrixWait(_ predicate: () -> Bool) async throws {
-    for _ in 0..<200 {
+private func matrixWait(polls: Int = 200, _ predicate: () -> Bool) async throws {
+    for _ in 0..<polls {
         if predicate() { return }
         try await Task.sleep(for: .milliseconds(5))
     }
@@ -497,6 +505,103 @@ func aFailedLittleWindowHandoffReplaysTheKeySelection() async throws {
     adapter.endLittleWindowHandoff()
     try await matrixWait { !target.opened.isEmpty }
     #expect(target.entries.first?.itemId == item)
+}
+
+private enum LittleWindowOpenInOutcome: CaseIterable {
+    case transferred, refused, superseded
+}
+
+@Test(arguments: LittleWindowOpenInOutcome.allCases) @MainActor
+private func littleWindowOpenInTransfersThePageOrRollsBackTheMove(outcome: LittleWindowOpenInOutcome) async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let window = "destination"
+    let space = "handoff-space"
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: window,
+                                   card: NSView(), seedProfiles: true, session: session)
+    let (target, host) = matrixFake()
+    let (source, popupHost) = matrixFake()
+    let runtime = Runtime(windowID: window)
+    runtime.host = host
+    runtime.adapter = engine
+    runtime.workspace = WorkspaceAdapter(windowID: window, session: session)
+    engine.attach(host)
+    engine.onSnapshot = { [weak runtime] snapshot in runtime?.show(snapshot) }
+    defer { engine.shutdown() }
+
+    let saved = try session.queue.sync {
+        let store = try #require(session.store)
+        _ = try store.createSpace(windowId: window, name: "Handoff", spaceId: space)
+        let item = try #require(store.createTab(windowId: window, url: "https://saved.example/").selectedId)
+        let pinned = try #require(store.snapshot(windowId: window).spaces.first { $0.id == space }?.pinnedId)
+        _ = try store.moveItem(windowId: window, id: item, container: pinned, index: 0, openFolder: false)
+        _ = try store.closeItem(windowId: window, id: item)
+        _ = try store.createSpace(windowId: window, name: "Later", spaceId: "later")
+        try store.showSpace(windowId: window, spaceId: "default")
+        return item
+    }
+    func snapshot() -> WorkspaceSnapshot {
+        session.queue.sync { session.store!.snapshot(windowId: window) }
+    }
+    runtime.show(snapshot())
+    #expect(snapshot().spaces.first { $0.id == space }?.pinned.first?.unloaded == true)
+
+    let popup = PopupHost()
+    popup.rootView.addSubview(popup.card)
+    popup.host = popupHost
+    let original = MatrixFakeTab(item: "original", live: "chrome-moved", profile: "Default", owner: source)
+    original.url = "https://moved.example/"
+    source.entries = [original]
+    let controller = LittleWindowController(popup: popup, origin: runtime, profile: "Default", frame: .zero,
+                                            url: original.url, commandBarVisible: false)
+    defer { popup.littleWindow = nil }
+    try await matrixWait { controller.model.openEnabled }
+    target.refuseHandoff = outcome != .transferred
+    target.onSetProfile = { [weak target] in
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: target?.window())
+    }
+    controller.performOpenIn(spaceID: space)
+    try await matrixWait { target.handoffAttempts > 0 }
+    let row = try #require(original.itemId)
+    #expect(row != "original")
+    #expect(target.opened.isEmpty)
+    #expect(snapshot().shownSpaceId == space)
+    #expect(snapshot().spaces.first { $0.id == space }?.today.contains { $0.id == row } == true)
+
+    if outcome == .transferred {
+        #expect(controller.checkOpenedIn?.item == row)
+        var applied = false
+        engine.onTransaction = { _, accepted in applied = accepted }
+        engine.windowHost(host, didReceiveTransaction: matrixTransaction(target, window: window, epoch: 1, rev: 0, command: nil))
+        try await matrixWait { applied }
+        #expect(target.opened.isEmpty)
+        #expect(target.activated == ["handoff"])
+        #expect(target.active == row)
+        #expect(runtime.snapshot.selectedId == row)
+        #expect(session.queue.sync { session.store?.liveTab(item: row) } == original.liveId)
+        #expect(session.queue.sync { session.store?.liveTab(item: saved) } == nil)
+        return
+    }
+
+    if outcome == .superseded {
+        runtime.switchWorkspaceSpace("later")
+        try await matrixWait {
+            original.itemId == "original" && snapshot().spaces.first { $0.id == space }?.today.isEmpty == true
+        }
+        #expect(snapshot().shownSpaceId == "later")
+        #expect(target.opened.isEmpty)
+        #expect(target.handoffAttempts == 1)
+    } else {
+        try await matrixWait(polls: 2400) { original.itemId == "original" && !target.opened.isEmpty }
+        #expect(target.entries.map(\.itemId) == [saved])
+    }
+    #expect(original.owner === source)
+    #expect(source.entries.first === original)
+    #expect(source.closeRequests == 0)
+    #expect(controller.checkOpenedIn == nil)
+    #expect(snapshot().spaces.first { $0.id == space }?.today.isEmpty == true)
 }
 
 @Test @MainActor

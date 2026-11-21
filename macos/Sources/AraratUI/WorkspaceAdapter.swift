@@ -273,9 +273,21 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         }, completion: completion)
     }
 
-    public func createTab(url: String, completion: @escaping Completion<Change>) {
+    public func createTab(url: String, expectedSpace: String? = nil, completion: @escaping Completion<Change>) {
+        let generation = spaceSwitchLock.withLock { spaceSwitchGeneration }
         enqueue({ () throws -> Change in
-            let snapshot = try self.opened().createTab(windowId: self.windowID, url: url)
+            let store = try self.opened()
+            let snapshot: WorkspaceSnapshot
+            if let expectedSpace {
+                snapshot = try self.spaceSwitchLock.withLock {
+                    guard self.spaceSwitchGeneration == generation, store.snapshot(windowId: self.windowID).shownSpaceId == expectedSpace else {
+                        throw CoreError.Edit(message: "tab destination changed")
+                    }
+                    return try store.createTab(windowId: self.windowID, url: url)
+                }
+            } else {
+                snapshot = try store.createTab(windowId: self.windowID, url: url)
+            }
             return (snapshot.selectedId, snapshot)
         }) { result in
             completion(result.flatMap { created in

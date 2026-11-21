@@ -2146,11 +2146,21 @@ final class Runtime: NSObject, NSMenuItemValidation {
 
   func showAndSelect(_ result: Result<WorkspaceSnapshot, Error>, expectedSpace: String? = nil, selectedItem: String? = nil) {
     guard case .success(let next) = result else { showResult(result); return }
+    guard showWorkspaceSpace(next, expectedSpace: expectedSpace) else { return }
+    selectWorkspaceRow(next, item: selectedItem)
+  }
+
+  private func showWorkspaceSpace(_ next: WorkspaceSnapshot, expectedSpace: String? = nil) -> Bool {
     guard hasUsableHost, expectedSpace == nil || next.shownSpaceId == expectedSpace,
           let space = next.spaces.first(where: { $0.id == next.shownSpaceId }),
-          host?.setProfileDirectory(space.profileName) == true else { return }
+          host?.setProfileDirectory(space.profileName) == true else { return false }
     show(next)
-    if let id = selectedItem ?? next.selectedId,
+    return true
+  }
+
+  private func selectWorkspaceRow(_ next: WorkspaceSnapshot, item: String? = nil) {
+    if let id = item ?? next.selectedId,
+       let space = next.spaces.first(where: { $0.id == next.shownSpaceId }),
        let row = (space.today + space.pinned + space.favorites).first(where: { $0.id == id }),
        let url = row.url { adapter?.select(id: id, url: url) }
   }
@@ -2174,32 +2184,44 @@ final class Runtime: NSObject, NSMenuItemValidation {
   }
 
   func switchWorkspaceSpace(_ id: String, completion: (() -> Void)? = nil) {
-    guard host?.isClosing() != true, host?.isClosingAll() != true else { sidebar?.restoreShownSpace(); return }
+    switchWorkspaceSpace(id, selectRow: true) { generation in
+      if generation != nil { completion?() }
+    }
+  }
+
+  func switchWorkspaceSpace(_ id: String, selectRow: Bool, completion: @escaping (Int?) -> Void) {
+    guard let workspace, host?.isClosing() != true, host?.isClosingAll() != true else {
+      sidebar?.restoreShownSpace()
+      completion(nil)
+      return
+    }
     selectionGeneration += 1
-    workspace?.cancelPendingSpaceSwitches()
+    workspace.cancelPendingSpaceSwitches()
     let generation = selectionGeneration
-    workspace?.showSpaceSelecting(id: id) { [weak self] result in
-      guard let self, self.selectionGeneration == generation else { return }
+    workspace.showSpaceSelecting(id: id) { [weak self] result in
+      guard let self, self.selectionGeneration == generation else { completion(nil); return }
       switch result {
       case .failure(let error):
         self.sidebar?.restoreShownSpace()
-        self.workspace?.snapshot { [weak self] latest in
-          guard let self, self.selectionGeneration == generation, case .success(let snapshot) = latest else { return }
-          self.showAndSelect(.success(snapshot))
-          if let id = snapshot.shownSpaceId {
-            self.sidebar?.showSpaceWithoutNotification(id: id)
+        workspace.snapshot { [weak self] latest in
+          if let self, self.selectionGeneration == generation, case .success(let snapshot) = latest {
+            if self.showWorkspaceSpace(snapshot), selectRow { self.selectWorkspaceRow(snapshot) }
+            if let id = snapshot.shownSpaceId { self.sidebar?.showSpaceWithoutNotification(id: id) }
           }
+          completion(nil)
         }
         self.report(error)
       case .success(let snapshot):
-        guard snapshot.shownSpaceId == id else { return }
-        self.workspace?.snapshot { [weak self] latest in
+        guard snapshot.shownSpaceId == id else { completion(nil); return }
+        workspace.snapshot { [weak self] latest in
           guard let self, self.selectionGeneration == generation, case .success(let current) = latest,
-                current.shownSpaceId == id else { return }
+                current.shownSpaceId == id else { completion(nil); return }
           self.adapter?.invalidateSelection()
-          self.showAndSelect(.success(current), expectedSpace: id)
+          let shown = self.showWorkspaceSpace(current, expectedSpace: id)
+          guard shown || selectRow else { self.sidebar?.restoreShownSpace(); completion(nil); return }
+          if selectRow && shown { self.selectWorkspaceRow(current) }
           self.sidebar?.showSpaceWithoutNotification(id: id)
-          completion?()
+          completion(generation)
         }
       }
     }
