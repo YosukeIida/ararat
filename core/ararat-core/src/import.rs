@@ -25,6 +25,7 @@ pub struct ImportReport {
     pub skipped_unknown_styles: usize,
     pub malformed_rules: usize,
     pub unknown_space_looks: usize,
+    pub skipped_favourites_by_profile: HashMap<String, usize>,
     pub missing_key_bindings: bool,
     pub key_bindings_error: Option<String>,
     pub skipped_key_bindings: usize,
@@ -94,6 +95,7 @@ pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Op
         items.insert(id.clone(), Item::container(id.clone(), 0));
     }
     let mut source_roots = HashSet::new();
+    let mut skipped_roots = Vec::new();
     for (profile, source) in favorites {
         if !source_roots.insert(source.clone())
             || spaces.iter().any(|space| space.owns_root(&source))
@@ -101,16 +103,40 @@ pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Op
         {
             return Err(err(&format!("invalid Arc favourites root {source}")));
         }
-        let target = spaces.iter().find(|space| space.profile == profile)
-            .and_then(|space| space.favorites.as_ref());
+        let Some(target) = spaces.iter().find(|space| space.profile == profile)
+            .and_then(|space| space.favorites.as_ref()) else {
+                skipped_roots.push((profile, source));
+                continue;
+            };
         for item in items.values_mut().filter(|item| item.membership.parent.as_ref() == Some(&source)) {
-            let target = target.ok_or_else(|| err(&format!("Arc favourites root {source} has no space in its profile")))?;
             if !matches!(item.kind, ItemKind::Tab { .. }) {
                 return Err(err(&format!("Arc favourite {} is not a tab", item.id)));
             }
             item.membership.parent = Some(target.clone());
         }
         items.remove(&source);
+    }
+    if !skipped_roots.is_empty() {
+        let mut children = HashMap::<Id, Vec<Id>>::new();
+        for item in items.values().filter(|item| !matches!(item.kind, ItemKind::Container)) {
+            if let Some(parent) = &item.membership.parent {
+                children.entry(parent.clone()).or_default().push(item.id.clone());
+            }
+        }
+        for (profile, root) in skipped_roots {
+            let mut pending = vec![root];
+            let mut count = 0;
+            while let Some(id) = pending.pop() {
+                if items.remove(&id).is_some_and(|item| matches!(item.kind, ItemKind::Tab { .. })) {
+                    count += 1;
+                }
+                pending.extend(children.remove(&id).into_iter().flatten());
+            }
+            if count > 0 {
+                let name = match profile { Profile::Default => "Default".into(), Profile::Named(name) => name };
+                *report.skipped_favourites_by_profile.entry(name).or_default() += count;
+            }
+        }
     }
     let mut workspace = Workspace { spaces, items, ..Workspace::default() };
     // Arc's file is not trusted to be a tree; a cycle would make every later walk loop.

@@ -58,13 +58,18 @@ fn arc_favorite_goes_to_the_first_space_of_its_profile_in_file_order() {
 }
 
 #[test]
-fn a_populated_arc_favorites_root_without_a_space_in_its_profile_is_rejected() {
+fn arc_favourites_without_a_matching_space_are_skipped_and_reported_by_profile() {
     let json = fixture_with(|c| {
-        let spaces = c["spaces"].as_array_mut().unwrap();
-        spaces[1]["profile"] = spaces[3]["profile"].clone();
+        c["topAppsContainerIDs"][0] = serde_json::json!({"custom": {"_0": {"directoryBasename": "Missing Profile"}}});
     });
-    let error = arc_sidebar(&json, None, None, None, None).unwrap_err();
-    assert!(error.0.contains("has no space in its profile"));
+    let (workspace, report) = arc_sidebar(&json, None, None, None, None).unwrap();
+    assert_eq!(report.spaces, 2);
+    assert_eq!(report.pinned_tabs, 3);
+    assert_eq!(report.favourite_tabs, 0);
+    assert_eq!(report.skipped_favourites_by_profile, [("Missing Profile".into(), 1)].into());
+    assert!(!workspace.items.contains_key("tab-mail"));
+    assert!(!workspace.items.contains_key("fav-default"));
+    workspace.check_tree().unwrap();
 }
 
 #[test]

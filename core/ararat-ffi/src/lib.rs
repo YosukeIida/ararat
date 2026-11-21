@@ -4,6 +4,7 @@
 use ararat_core::import;
 use ararat_core::model::{Id, Item, ItemKind, Lifecycle, Space, Workspace};
 use ararat_core::storage::{Store, StoreError};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -1507,6 +1508,7 @@ pub struct ImportReport {
     pub key_bindings_error: Option<String>,
     pub skipped_key_bindings: u64,
     pub unknown_space_looks: u64,
+    pub skipped_favourites_by_profile: HashMap<String, u64>,
     pub missing_windows: bool,
     pub windows_error: Option<String>,
     pub differing_folder_states: u64,
@@ -1528,6 +1530,7 @@ impl From<import::ImportReport> for ImportReport {
         Self { missing_link_routing: report.missing_link_routing, link_routing_error: report.link_routing_error,
             imported_rules: report.imported_rules as u64, skipped_profile_destinations: report.skipped_profile_destinations as u64,
             skipped_unknown_destinations: report.skipped_unknown_destinations as u64, skipped_unknown_styles: report.skipped_unknown_styles as u64,
+            skipped_favourites_by_profile: report.skipped_favourites_by_profile.into_iter().map(|(name, count)| (name, count as u64)).collect(),
             malformed_rules: report.malformed_rules as u64,
             missing_key_bindings: report.missing_key_bindings, key_bindings_error: report.key_bindings_error, skipped_key_bindings: report.skipped_key_bindings as u64, unknown_space_looks: report.unknown_space_looks as u64, missing_windows: report.missing_windows,
             windows_error: report.windows_error, differing_folder_states: report.differing_folder_states as u64,

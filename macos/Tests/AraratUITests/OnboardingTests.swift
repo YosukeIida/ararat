@@ -235,11 +235,28 @@ func theReportLinesComeOnlyFromTheReportsCounters() throws {
                              skippedProfileDestinations: 0, skippedUnknownDestinations: 0,
                              skippedUnknownStyles: 0, malformedRules: 0,
                              missingKeyBindings: false, keyBindingsError: nil, skippedKeyBindings: 0,
-                             unknownSpaceLooks: 0, missingWindows: false, windowsError: nil,
+                             unknownSpaceLooks: 0, skippedFavouritesByProfile: [:], missingWindows: false, windowsError: nil,
                              differingFolderStates: 0, skippedDates: 0, peekedFolders: 0,
                              unknownWindowIds: 0, malformedWindowEntries: 0,
                              spaces: 0, pinnedTabs: 0, folders: 0, favouriteTabs: 0, spacesWithLook: 0)
     #expect(OnboardingModel.reportLines(empty).isEmpty)
+}
+
+@Test @MainActor
+func onboardingReportsSkippedFavouritesWithTheirCountAndProfile() throws {
+    let fixture = OnboardingFixtures.showcase
+    let sidebar = fixture.sidebar.replacingOccurrences(of: #"[{"default":true},"fav-default"]"#,
+        with: #"[{"custom":{"_0":{"directoryBasename":"Missing Profile"}}},"fav-default"]"#)
+    let data = OnboardingData(sidebar: sidebar, windows: fixture.windows,
+                              keyBindings: fixture.keyBindings, routing: fixture.routing, spaces: fixture.spaces)
+    let (model, directory) = try onboardingTestModel(data)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    runImport(model)
+    #expect(model.stage == .done)
+    #expect(model.summary?.spaces == 3)
+    #expect(model.summary?.favourites == 0)
+    #expect(model.report?.skippedFavouritesByProfile == ["Missing Profile": 8])
+    #expect(model.lines.map(\.text).contains("8 favourites were skipped from “Missing Profile” because the profile had no imported space."))
 }
 
 /// Screen 3: the fixture's spaces with their profiles and pinned counts, and the Also list is only

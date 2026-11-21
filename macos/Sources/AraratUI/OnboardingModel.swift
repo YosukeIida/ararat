@@ -359,6 +359,11 @@ public final class OnboardingModel: NSObject, ObservableObject {
             "\($0) \($0 == 1 ? "space had a look" : "spaces had looks") Ararat could not read, so "
                 + ($0 == 1 ? "it was" : "they were") + " left out."
         }
+        for (profile, count) in report.skippedFavouritesByProfile.sorted(by: { $0.key < $1.key }) {
+            add("favourites-\(profile)", Int(count)) {
+                "\($0) \($0 == 1 ? "favourite was" : "favourites were") skipped from “\(profile)” because the profile had no imported space."
+            }
+        }
         add("profile-routes", Int(report.skippedProfileDestinations)) {
             "\($0) \($0 == 1 ? "route sent" : "routes sent") links to a profile. "
                 + ($0 == 1 ? "It was" : "They were") + " skipped."
