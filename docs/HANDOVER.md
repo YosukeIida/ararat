@@ -351,7 +351,7 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 
 ## Next
 
-1. Owner decisions open (§14): favourites per space or per profile, content blocker, page translation, the Natural scroll direction on the trackball, a date to verify Arc sign-in import, favicon drawing. Owner work: a VoiceOver pass on the Look popover, and the grain's strength on the real app (one gain on the tile's alpha, now 1, U24 part 2).
+1. Owner decisions open (§14): content blocker, page translation, the Natural scroll direction on the trackball, a date to verify Arc sign-in import, favicon drawing. Owner work: a VoiceOver pass on the Look popover, and the grain's strength on the real app (one gain on the tile's alpha, now 1, U24 part 2).
 2. Measure on Arc: how long a dragged tab rests on a collapsed folder before it opens (now 0.6 s, ours, `folderHoverDelay`).
 3. Phase 5: every unit is merged on main (p5atc, p5general, p5restore, p5split, p5dl, p5archive and p5docs), and the full VM suite passes on that tree (c2 cases run in the matrix only; atc-routing-ls passed on a rebooted guest). Next is the owner's hands-on check for Phase 5's workflow, then Phase 6. Phase 4 is done (U22–U27 on main, not pushed); Phase 3 is complete except the owner's 158 pin decision (U19). The team runs on herdr-agent-team (`~/.config/herdr-agent-team/ararat/`). Seats never write to `~/chromium-build` (Codex's sandbox refuses it): design runs apply, gen, build and the checks at each unit's exit. Run `macos/scripts/build-core.sh` in the plain devshell; Xcode's environment (README's `xc`) is for `swift` only. A new worktree needs `direnv allow` before a seat uses it. Engine scripts need a clean PATH (no `/nix`) and run under `/bin/bash` 3.2: `env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash engine/scripts/<cmd>`. Every engine launch passes `--use-mock-keychain`.
 
@@ -365,4 +365,4 @@ Read `AGENTS.md` and `docs/architecture.md` first.
 - Inside the devshell `swift` and `swiftc` are hidden by nix's apple-sdk; use the README's `xc`.
   `mkShellNoCC` was tried to avoid this and breaks Rust linking (`-liconv`).
 - Swift Testing: a test that dispatches an NSEvent (`NSApp.sendEvent`, `window.sendEvent`) can end the whole test run with exit 0 and no failure; pin event-dependent rules as pure helpers and cover the real click in a VM check.
-- Open owner decisions: architecture §14 (per-space settings mock first, favorites per profile or per space, DRM, content blocker, Safe Browsing source, sync hosting).
+- Open owner decisions: architecture §14 (per-space settings mock first, DRM, content blocker, Safe Browsing source, sync hosting).
