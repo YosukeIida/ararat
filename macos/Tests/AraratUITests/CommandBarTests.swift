@@ -69,6 +69,23 @@ private final class FakeCommandBarStore: CommandBarStore {
     func searchURL(_ text: String) -> String { "search:" + text }
 }
 
+@Test @MainActor
+func passwordOfferActionPreservesNavigationDefaultAndDisappearsWhenRevoked() {
+    let url = "https://example.com"
+    let controller = CommandBarController()
+    let store = FakeCommandBarStore()
+    store.results[url] = CommandBarResult(rows: [barRow(url, target: .openUrl(url: url))], privateWindow: false)
+    controller.passwordOfferTitle = "Save Password…"
+    controller.open(mode: .editURL, prefill: url, store: store)
+    #expect(controller.result.rows.map(\.target) == [
+        .openUrl(url: url), .command(id: CommandBarController.passwordOfferCommand),
+    ])
+    controller.moveSelection(by: 1)
+    controller.passwordOfferTitle = nil
+    #expect(controller.result.rows.map(\.target) == [.openUrl(url: url)])
+    #expect(controller.selectedIndex == 0)
+}
+
 /// A bar in an unordered window; the field editor is made first responder so keys can be fed
 /// straight into it. The store may be nil while the session is pending (the panel keys at once).
 @MainActor

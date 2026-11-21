@@ -20,12 +20,16 @@ class AraratPasswordPromptModel {
   enum class Action { kAccept, kNotNow, kNever };
 
   static bool Supports(password_manager::ui::State state);
+  static bool SupportsConfirmation(password_manager::ui::State state);
   AraratPasswordPromptModel(base::WeakPtr<PasswordsModelDelegate> delegate,
-                            base::RepeatingCallback<bool()> can_save);
+                            base::RepeatingCallback<bool()> can_save,
+                            PasswordBubbleControllerBase::DisplayReason reason);
   ~AraratPasswordPromptModel();
 
   const password_manager::PasswordForm& credential() const;
-  void EditUsername(const std::u16string& username);
+  void EditCredential(const std::u16string& username,
+                      password_manager::PasswordString password);
+  void ShouldRevealPasswords(base::OnceCallback<void(bool)> callback);
   bool IsUpdate() const;
   bool CanNever() const;
   bool Act(Action action);
@@ -40,8 +44,16 @@ class AraratPasswordPromptModel {
 };
 
 void AraratInstallPasswordPrompt();
+struct AraratPasswordOffer {
+  unsigned long generation = 0;
+  bool is_update = false;
+};
+void AraratObservePasswordOffer(content::WebContents*, base::RepeatingClosure);
+AraratPasswordOffer AraratGetPasswordOffer(content::WebContents*);
+bool AraratReopenPasswordOffer(content::WebContents*, unsigned long generation);
 views::Widget* AraratCheckPasswordPromptWidget(content::WebContents* contents);
 bool AraratCheckPressNeverButton(views::Widget* widget);
+bool AraratCheckEditPassword(views::Widget* widget, bool empty);
 int AraratCheckPasswordPromptNotNowCount();
 
 #endif  // ARARAT_CORE_ARARAT_PASSWORD_PROMPT_H_

@@ -102,6 +102,13 @@ public final class CommandBarController {
     }
     public var onCommit: (Suggestion?, CommandBarMode, Bool) -> Void = { _, _, _ in }
     public var onClose: () -> Void = {}
+    public static let passwordOfferCommand = "reopen_password_offer"
+    public var passwordOfferTitle: String? {
+        didSet {
+            guard isOpen, passwordOfferTitle != oldValue else { return }
+            relist(preserving: result.rows.indices.contains(selectedIndex) ? result.rows[selectedIndex].target : nil)
+        }
+    }
     /// Fires on every state change; the view syncs in here.
     public var onChange: () -> Void = {}
     /// Fires after every query with the row list settled; the harness positions the panel in
@@ -205,6 +212,13 @@ public final class CommandBarController {
             result = CommandBarResult(rows: [], privateWindow: privateWindow)
         } else {
             result = store?.query(query, history: history) ?? CommandBarResult(rows: [], privateWindow: privateWindow)
+        }
+        if mode != .search, let title = passwordOfferTitle,
+           query == fieldText && fieldTextSelected ||
+           query.isEmpty || title.localizedStandardContains(query) {
+            let row = Suggestion(title: title, subtitle: "Command", url: nil, key: nil,
+                                 target: .command(id: Self.passwordOfferCommand), score: 0)
+            result.rows.insert(row, at: min(1, result.rows.count))
         }
         result.rows = Array(result.rows.prefix(CommandBarMetrics.maxRows))
         self.result = result

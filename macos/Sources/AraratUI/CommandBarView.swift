@@ -244,7 +244,7 @@ final class CommandBarRowView: NSView {
         case .tab, .openUrl: return "globe"
         case .history: return "clock"
         case .search: return "magnifyingglass"
-        case .command: return "command"
+        case .command(let id): return id == CommandBarController.passwordOfferCommand ? "key" : "command"
         case .space, .moveToSpace: return "square.grid.2x2"
         case .folder, .moveToFolder: return "folder"
         }

@@ -49,6 +49,17 @@ public final class SettingsCheckProbe: NSObject {
     public var passwordsAuthenticationPending: Bool { model.passwords.busy }
     public var passwordsAuthenticationFailed: Bool { model.passwords.error != nil }
     public var passwordIsRevealed: Bool { model.passwords.showingPassword }
+    public var passwordDiscardConfirmation: Bool { model.passwords.confirmDiscardPassword }
+
+    public func editRevealedPasswordForCheck() {
+        let passwords = model.passwords
+        guard passwords.showingPassword else { return }
+        passwords.revealed.objectValue = "fixture-discard-edit" as NSString
+        passwords.passwordDidChange()
+    }
+
+    public func togglePasswordRevealForCheck() { model.passwords.toggleReveal() }
+    public func discardPasswordEditForCheck() { model.passwords.discardPasswordEdit() }
     public var passwordWebsites: [String]? {
         let passwords = model.passwords
         guard passwords.page == .list, passwords.state == .ready else { return nil }

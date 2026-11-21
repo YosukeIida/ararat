@@ -81,6 +81,27 @@ extension Runtime {
                 note("waiting for the detail with the revealed fixture password"); return
             }
             check.report("detail", true)
+            probe.editRevealedPasswordForCheck()
+            probe.togglePasswordRevealForCheck()
+            guard probe.passwordDiscardConfirmation, probe.passwordIsRevealed else {
+                end("discard_password_edit", false); return
+            }
+            probe.discardPasswordEditForCheck()
+            guard !probe.passwordDiscardConfirmation, !probe.passwordIsRevealed else {
+                end("discard_password_edit", false); return
+            }
+            probe.togglePasswordRevealForCheck()
+            step(7)
+        case 7:
+            guard probe.isShowingRevealedPassword(for: target.website, matching: target.password) else {
+                note("waiting for the unchanged fixture password"); return
+            }
+            probe.togglePasswordRevealForCheck()
+            step(8)
+        case 8:
+            guard !probe.passwordIsRevealed, hasMarker("passwords-hidden"),
+                  !hasMarker("passwords-revealed") else { return }
+            check.report("discard_password_edit", true)
             guard capture("detail") else { end("capture", false); return }
             finish()
         default:

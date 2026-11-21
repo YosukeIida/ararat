@@ -172,7 +172,7 @@ final class PromptFixtureServer {
         // Chromium keeps the prior autofilled value after a script assignment.
         // Edit as the renderer's text editor so submission uses the new value.
         for (const [id, value] of [
-          ['username', known ? 'fixture' : 'fixture-' + scenario],
+          ['username', known ? 'fixture' : 'fixture-' + scenario + (location.search.includes('variant=2') ? '-2' : '')],
           ['password', scenario === 'update' ? 'fixture-updated-72' : 'fixture-initial-43'],
         ]) {
           const input = document.getElementById(id);
@@ -183,6 +183,12 @@ final class PromptFixtureServer {
             return 'edit_failed';
         }
         return 'filled';
+      }
+      function startAraratPasswordConfirmation() {
+        if (!window.PasswordCredential || !navigator.credentials) return 'unsupported';
+        const credential = new PasswordCredential({id: 'fixture', password: 'fixture-confirmed-39'});
+        navigator.credentials.store(credential).catch(() => {});
+        return 'started';
       }
     </script>
     """

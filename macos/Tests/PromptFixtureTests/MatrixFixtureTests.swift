@@ -17,6 +17,7 @@ private final class MatrixFakeTab: NSObject {
     @objc dynamic var url = "about:blank"
     @objc dynamic var title = ""
     @objc dynamic var navigationCount: UInt = 0
+    @objc var passwordOffer: ARPasswordOfferState { ARPasswordOfferState() }
     var thumbnailVisible = true
     weak var owner: MatrixFakeHost?
     var profile: String

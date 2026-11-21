@@ -122,7 +122,7 @@ public final class URLFieldBackgroundButton: NSButton {
 /// One of the field's two 24 pt buttons: Copy Link and the site controls.
 @MainActor
 public class URLFieldButton: NSButton {
-    public enum Role { case copyLink, siteControls }
+    public enum Role { case copyLink, siteControls, passwordOffer }
 
     public let role: Role
     public var isHovered = false { didSet { updateBackground() } }
@@ -158,6 +158,12 @@ public class URLFieldButton: NSButton {
     // An unbordered image-only button carries negative alignment insets for its focus ring, so a
     // required 24 pt height would render a 33 pt frame. The board's 24 x 24 is the frame.
     public override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
+
+    func showPasswordOffer(_ title: String?) {
+        isHidden = title == nil
+        setAccessibilityLabel(title ?? "")
+        toolTip = title
+    }
 
     // S3: a click on Copy Link or the site controls must not take focus from the page. With Full
     // Keyboard Access on, a keyboard user must still reach both, so focus follows that setting;
@@ -234,7 +240,11 @@ public class URLFieldButton: NSButton {
                 .withSymbolConfiguration(.init(pointSize: 12, weight: .semibold))
             contentTintColor = .systemGreen
         } else {
-            currentSymbol = role == .copyLink ? "doc.on.doc" : "slider.horizontal.3"
+            switch role {
+            case .copyLink: currentSymbol = "doc.on.doc"
+            case .siteControls: currentSymbol = "slider.horizontal.3"
+            case .passwordOffer: currentSymbol = "key"
+            }
             image = NSImage(systemSymbolName: currentSymbol, accessibilityDescription: nil)
             contentTintColor = .labelColor
         }

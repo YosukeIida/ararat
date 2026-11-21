@@ -170,6 +170,10 @@ class TabContentsObserver : public content::WebContentsObserver,
       : content::WebContentsObserver(contents), tab_(tab) {
     if (auto* driver = favicon::ContentFaviconDriver::FromWebContents(contents))
       favicon_observation_.Observe(driver);
+    __weak ARTab* weak_tab = tab;
+    AraratObservePasswordOffer(contents, base::BindRepeating(^{
+      [[weak_tab ownerHost] queuePasswordOfferChanged];
+    }));
   }
   void Stop() {
     favicon_observation_.Reset();
@@ -510,11 +514,33 @@ static bool IsPasswordLoginFixture(content::WebContents* contents) {
   return YES;
 }
 
+- (BOOL)checkStartPasswordConfirmation:(void (^)(NSString*))completion {
+  if (!IsPasswordLoginFixture(contents_)) return NO;
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(
+      u"startAraratPasswordConfirmation()",
+      base::BindOnce(^(base::Value value) {
+        completion(value.is_string() ? base::SysUTF8ToNSString(value.GetString())
+                                     : @"no_renderer_result");
+      }), content::ISOLATED_WORLD_ID_GLOBAL);
+  return YES;
+}
+
 - (NSInteger)checkPasswordPromptState {
   if (!contents_ || base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
                         "ararat-screen") != "password-prompt") return -1;
   auto* controller = ManagePasswordsUIController::FromWebContents(contents_);
   return controller ? static_cast<NSInteger>(controller->GetState()) : -1;
+}
+
+- (ARPasswordOfferState)passwordOffer {
+  if (!contents_ || ![host_ isActiveTab:self]) return {};
+  auto offer = AraratGetPasswordOffer(contents_);
+  return {offer.generation, offer.is_update ? YES : NO};
+}
+
+- (BOOL)reopenPasswordOffer:(NSUInteger)generation {
+  return contents_ && [host_ isActiveTab:self] &&
+         AraratReopenPasswordOffer(contents_, generation);
 }
 
 - (NSWindow*)checkPasswordPromptWindow {
@@ -526,6 +552,12 @@ static bool IsPasswordLoginFixture(content::WebContents* contents) {
   auto* widget = contents_ ? AraratCheckPasswordPromptWidget(contents_) : nullptr;
   if (!widget || !widget->IsVisible()) return NO;
   if ([action isEqualToString:@"never"]) return AraratCheckPressNeverButton(widget);
+  if ([action isEqualToString:@"close"]) {
+    widget->Close();
+    return YES;
+  }
+  if ([action isEqualToString:@"clearPassword"] || [action isEqualToString:@"editPassword"])
+    return AraratCheckEditPassword(widget, [action isEqualToString:@"clearPassword"]);
   if ([action isEqualToString:@"cancel"]) {
     widget->widget_delegate()->AsDialogDelegate()->CancelDialog();
     return YES;

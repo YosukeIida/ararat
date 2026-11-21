@@ -21,6 +21,7 @@ final class SettingsPasswordsModel: ObservableObject {
     @Published var website = ""
     @Published var username = ""
     @Published var confirmDelete = false
+    @Published var confirmDiscardPassword = false
 
     private(set) var handle: (any ARPasswordsAPI)?
     private var generation = UUID()
@@ -245,7 +246,11 @@ final class SettingsPasswordsModel: ObservableObject {
     }
 
     func toggleReveal() {
-        if showingPassword { clearPassword(); return }
+        if showingPassword {
+            if passwordChanged { confirmDiscardPassword = true }
+            else { clearPassword() }
+            return
+        }
         guard authorized, let selected, let handle, !busy else { return }
         busy = true
         error = nil
@@ -261,7 +266,13 @@ final class SettingsPasswordsModel: ObservableObject {
         }
     }
 
+    func discardPasswordEdit() {
+        guard showingPassword, passwordChanged else { return }
+        clearPassword()
+    }
+
     private func clearPassword() {
+        confirmDiscardPassword = false
         detailRequest = UUID()
         if busy, selected != nil {
             handle?.cancelAuthentication()
@@ -433,6 +444,7 @@ struct SettingsPasswordsSection: View {
                     } else {
                         TextField("Password", text: .constant("••••••••")).labelsHidden().disabled(true)
                             .accessibilityLabel("Password hidden").frame(width: 220)
+                            .background(SettingsMarker(id: "passwords-hidden"))
                     }
                     Button(model.showingPassword ? "Hide" : "Show", action: model.toggleReveal).disabled(model.busy)
                 }
@@ -456,6 +468,9 @@ struct SettingsPasswordsSection: View {
         }.alert("Delete password?", isPresented: $model.confirmDelete) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive, action: model.remove)
+        }.alert("Discard the password edit?", isPresented: $model.confirmDiscardPassword) {
+            Button("Keep Editing", role: .cancel) {}.keyboardShortcut(.defaultAction)
+            Button("Discard Password Edit", role: .destructive, action: model.discardPasswordEdit)
         }
     }
 

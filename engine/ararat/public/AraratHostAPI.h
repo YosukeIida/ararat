@@ -43,6 +43,11 @@ NS_SWIFT_MAIN_ACTOR
 - (void)invalidate;
 @end
 
+typedef struct {
+  NSUInteger generation;
+  BOOL isUpdate;
+} ARPasswordOfferState;
+
 @protocol ARTabAPI <NSObject>
 @property(nonatomic, readonly, copy) NSString* liveId;
 @property(nonatomic, copy, nullable) NSString* itemId;
@@ -110,6 +115,9 @@ NS_SWIFT_MAIN_ACTOR
 - (void)checkAutofillAction:(NSInteger)action;
 - (BOOL)checkFillPasswordFixture:(void (^)(NSString*))completion;
 - (BOOL)checkSubmitPasswordFixture;
+- (BOOL)checkStartPasswordConfirmation:(void (^)(NSString*))completion;
+@property(nonatomic, readonly) ARPasswordOfferState passwordOffer;
+- (BOOL)reopenPasswordOffer:(NSUInteger)generation;
 - (NSInteger)checkPasswordPromptState;
 - (nullable NSWindow*)checkPasswordPromptWindow;
 - (BOOL)checkPasswordPromptAction:(NSString*)action;

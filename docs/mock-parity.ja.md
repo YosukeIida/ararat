@@ -137,10 +137,10 @@ VM チェック欄にはチェック名と段階、またはファイル名の�
 | `E-General` | General の残りの設定 | — | 未実装 | 検索候補、検索エンジン、スペルチェックは後の実装とする（§7）。 |
 | `E-LittleWindow` | ショートカット、移動先、閉じる動作、サイズと位置の保持 | `settings-little-window-little-window` | 一致 | `settings-little-window-little-window` で決定 99 の順序どおりに 5 行と各コントロールを確認した。ショートカットとスイッチの状態はフィクスチャの値である。 |
 | `E-Passwords` | プロファイルごとのスイッチ、保存済みパスワードと認証 | `settings-passwords-locked`、`settings-passwords-search` | 修正済み、VM 再確認待ち | 検索欄と追加ボタンは一覧カードの上に置き、一覧が空なら追加ボタンを残す。Chromium が生体認証の利用を記録すると Fill passwords を表示し、変更のたびに端末認証を求める。VM 用の検査は認証を模擬し、実機の Touch ID は未確認である。 |
-| `E-Passwords` | ログイン情報の詳細 | `settings-passwords-detail` | 修正済み、VM 再確認待ち | ユーザー名とパスワードは詳細ページで編集する。表示中のパスワードは選択して macOS の標準操作でコピーできる。Web サイトは対象プロファイルで開き、Delete はログイン情報を削除する。 |
-| `E-Passwords` | Save Changes | — | 相違（承認済み） | ユーザー名かパスワードを編集すると Save Changes が表示される。モックではこのボタンが省かれている。 |
+| `E-Passwords` | ログイン情報の詳細 | `settings-passwords-detail` | 修正済み、VM 再確認待ち | ユーザー名とパスワードは詳細ページで編集する。表示中のパスワードは選択して macOS の標準操作でコピーできる。編集後に Hide を選ぶと破棄を確認する。検査用画像ではパスワードを伏せ字にする。Web サイトは対象プロファイルで開き、Delete はログイン情報を削除する。 |
+| `E-Passwords` | Save Changes | — | 相違（承認済み） | ユーザー名かパスワードを編集すると Save Changes が表示される。パスワードの変更を破棄しても、ユーザー名の変更は保持する。モックでは Save Changes が省かれている。 |
 | `E-Passwords` | Import from Arc | — | 相違 | Arc からのパスワード取り込みは単位 (c) で追加する。 |
-| — | パスワードの保存・更新の確認 | `password-save`、`password-update` | ボードなし、設計判断 | 単位 (d) ではカード保存と同じダイアログをページカード上辺の中央に置く。VM での検査は未実施。 |
+| — | パスワードの保存・更新の確認 | `password-save`、`password-update`、`password-key-notNow`、`password-key-littleWindow` | ボードなし、設計判断 | 既存のページカードのダイアログと、表示アニメーション後の撮影は VM で確認済み。伏せ字のパスワード編集欄、自動保存・自動更新の完了確認、鍵ボタンは VM での再確認待ち。 |
 | `E-Privacy` | 閲覧データの消去、保持期間、Cookie とプライバシー設定 | `settings-privacy-privacy`, `settings-privacy-privacy-sheet` | 相違 | `settings-privacy-privacy` には仕様検討中の Protection 機能がない（決定 97）。`settings-privacy-sheet` は Cancel に塗りがあり、Clear Data を Clear と表示し、プロファイルを固定ラベルで示し、Site permissions のチェックボックスがない。 |
 | `E-Privacy` | ブロッカーと危険なサイトの警告 | — | 未実装 | 方式と情報源は未決定である（§14）。 |
 | `E-Search` | 設定内検索と該当項目の強調 | `settings-search-search`, `settings-search-search-cleared` | 一致 | `settings-search-search` と `settings-search-search-cleared` で、レールに代わる検索結果、先頭結果の選択、対象行にスクロールした後の灰色の強調表示を確認した。 |

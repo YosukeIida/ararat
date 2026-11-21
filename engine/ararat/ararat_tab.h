@@ -40,6 +40,7 @@ class WebContents;
 - (void)noteNavigationForTab:(ARTab*)tab;
 - (BOOL)takePendingNavigationForTab:(ARTab*)tab;
 - (void)tabMetadataChanged:(NSString*)field tab:(ARTab*)tab;
+- (void)queuePasswordOfferChanged;
 - (void)traceTabEvent:(NSString*)field tab:(ARTab*)tab;
 - (BOOL)checkDialogHostForContents:(content::WebContents*)contents;
 @end
