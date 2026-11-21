@@ -95,8 +95,18 @@ func shortTitlesHaveNoHoverMask() throws {
 func attachedIdleSidebarHasNoRepeatingTimer() {
     let (window, sidebar) = reviewWindow()
     defer { window.contentView = nil }
-    let timers = Mirror(reflecting: sidebar).children.compactMap { $0.value as? Timer }.filter(\.isValid)
-    #expect(timers.isEmpty)
+    #expect(validSidebarTimers(sidebar).isEmpty)
+}
+
+@MainActor
+func validSidebarTimers(_ sidebar: SidebarView) -> [Timer] {
+    let timerLabels: Set = ["dragTimer", "pullTimer", "gestureExpiryTimer", "momentumQuietTimer"]
+    // Casting unrelated children can trap when AppKit returns a null general pasteboard.
+    return Mirror(reflecting: sidebar).children.compactMap { child in
+        guard let label = child.label, timerLabels.contains(label),
+              let timer = child.value as? Timer, timer.isValid else { return nil }
+        return timer
+    }
 }
 
 @Test @MainActor

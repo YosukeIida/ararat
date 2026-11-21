@@ -135,7 +135,7 @@ private func polishCounts(_ sidebar: SidebarView) -> [Int] {
     let views = polishViews(sidebar)
     func layers(_ layer: CALayer) -> [CALayer] { [layer] + (layer.sublayers ?? []).flatMap(layers) }
     let backing = sidebar.layer.map(layers) ?? []
-    let timers = Mirror(reflecting: sidebar).children.compactMap { $0.value as? Timer }.filter(\.isValid)
+    let timers = validSidebarTimers(sidebar)
     // The scroll hairlines' edge.fade spans several switches, so it is the one running
     // animation not counted here: it ends on its own timer, not with a view's life.
     let animations = backing.reduce(0) { total, layer in
