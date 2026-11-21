@@ -44,6 +44,13 @@ ArcLoginDataResult ReadArcLoginData(const base::FilePath& copy,
 std::string EncryptArcPasswordForTesting(std::string_view safe_storage_secret,
                                          std::string_view plaintext);
 
+// Writes a version-43 `Login Data` with `logins` for fixtures. A login whose
+// `password` starts with "raw:" is stored as the bytes after the marker,
+// unencrypted, to model rows the key cannot open.
+bool WriteArcLoginDataForTesting(const base::FilePath& path,
+                                 std::string_view safe_storage_secret,
+                                 const std::vector<ArcLogin>& logins);
+
 }  // namespace ararat
 
 #endif  // ARARAT_CORE_ARARAT_ARC_LOGIN_DATA_H_

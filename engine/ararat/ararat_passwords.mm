@@ -552,6 +552,35 @@ bool IsScratchPasswordProfile(const base::FilePath& path) {
       }));
 }
 
+- (BOOL)checkWriteArcFixture:(NSString*)path {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  const base::FilePath target(base::SysNSStringToUTF8(path));
+  if (![self checkUsesArcFixtureKey] || !target.IsAbsolute() ||
+      !IsScratchPasswordProfile(target.DirName()))
+    return NO;
+  auto login = [](std::string realm, std::u16string user, std::string password,
+                  bool blocked = false) {
+    ararat::ArcLogin row;
+    row.origin_url = realm;
+    row.signon_realm = std::move(realm);
+    row.username = std::move(user);
+    row.password = std::move(password);
+    row.blocked = blocked;
+    return row;
+  };
+  const std::vector<ararat::ArcLogin> rows = {
+      login("https://arc-fixture-1.invalid/", u"ann", "arc-fixture-11"),
+      login("https://arc-fixture-2.invalid/", u"zo\u00eb", "arc \"fixture\", 12 \u00e9"),
+      login("https://arc-fixture-1.invalid/", u"ann", "arc-fixture-11"),
+      login("https://arc-fixture-3.invalid/", u"carl", "arc-fixture-32"),
+      login("https://arc-fixture-4.invalid/", u"", "", /*blocked=*/true),
+      login("https://arc-fixture-5.invalid/", u"dan", "raw:v10notencrypted"),
+      login("https://arc-fixture-6.invalid/", u"eve", "raw:v11whatever"),
+  };
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  return ararat::WriteArcLoginDataForTesting(target, "fixture-arc-secret", rows);
+}
+
 - (ARArcPasswordImportCounts)addArcLogins:(const ararat::ArcLoginDataResult&)result {
   ARArcPasswordImportCounts counts{};
   counts.undecryptable = result.undecryptable;
@@ -583,7 +612,7 @@ bool IsScratchPasswordProfile(const base::FilePath& path) {
       else
         ++counts.conflicts;
     } else if (added.contains(key)) {
-      ++counts.conflicts;
+      ++counts.existing;
     } else if (presenter_->AddCredential(
                    entry, password_manager::PasswordForm::Type::kImported)) {
       added.insert(key);

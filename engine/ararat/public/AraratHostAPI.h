@@ -60,6 +60,7 @@ NS_SWIFT_MAIN_ACTOR
 // `loginData` is one Arc profile's "Login Data". It is copied before reading;
 // the key comes from the "Arc Safe Storage" Keychain item, so macOS asks the
 // user first. Passwords never cross this API; only counts do.
+- (BOOL)checkWriteArcFixture:(NSString*)path;
 - (void)importArcPasswordsFrom:(NSString*)loginData
                     completion:(void (NS_SWIFT_MAIN_ACTOR ^)(ARArcPasswordImportStatus status,
                                                              ARArcPasswordImportCounts counts))completion;

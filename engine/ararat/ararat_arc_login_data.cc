@@ -106,4 +106,38 @@ std::string EncryptArcPasswordForTesting(std::string_view safe_storage_secret,
   return out;
 }
 
+bool WriteArcLoginDataForTesting(const base::FilePath& path,
+                                 std::string_view safe_storage_secret,
+                                 const std::vector<ArcLogin>& logins) {
+  sql::Database db("Passwords");
+  if (!db.Open(path) ||
+      !db.Execute("CREATE TABLE meta(key LONGVARCHAR NOT NULL UNIQUE PRIMARY "
+                  "KEY, value LONGVARCHAR)") ||
+      !db.Execute("INSERT INTO meta(key, value) VALUES('version', 43)") ||
+      !db.Execute("CREATE TABLE logins(origin_url VARCHAR NOT NULL, "
+                  "signon_realm VARCHAR NOT NULL, username_value VARCHAR, "
+                  "password_value BLOB, scheme INTEGER NOT NULL, "
+                  "blacklisted_by_user INTEGER NOT NULL)")) {
+    return false;
+  }
+  for (const auto& login : logins) {
+    sql::Statement row(
+        db.GetUniqueStatement("INSERT INTO logins VALUES(?, ?, ?, ?, ?, ?)"));
+    std::string value;
+    if (login.password.starts_with("raw:"))
+      value = login.password.substr(4);
+    else if (!login.password.empty())
+      value = EncryptArcPasswordForTesting(safe_storage_secret, login.password);
+    row.BindString(0, login.origin_url);
+    row.BindString(1, login.signon_realm);
+    row.BindString16(2, login.username);
+    row.BindBlob(3, base::as_byte_span(value));
+    row.BindInt(4, login.scheme);
+    row.BindBool(5, login.blocked);
+    if (!row.Run())
+      return false;
+  }
+  return true;
+}
+
 }  // namespace ararat
