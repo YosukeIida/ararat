@@ -533,15 +533,15 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         traceLittleWindow("scope-begin count=\(littleWindowHandoffs)")
     }
 
-    public func endLittleWindowHandoff() {
+    public func endLittleWindowHandoff(replayKeySelection: Bool = true) {
         precondition(Thread.isMainThread)
         queue.sync {}
         precondition(littleWindowHandoffs > 0)
         littleWindowHandoffs -= 1
-        traceLittleWindow("scope-end count=\(littleWindowHandoffs) deferred=\(littleWindowKeyTakePending) replay=\(littleWindowHandoffs == 0 && littleWindowKeyTakePending)")
+        traceLittleWindow("scope-end count=\(littleWindowHandoffs) deferred=\(littleWindowKeyTakePending) replay=\(littleWindowHandoffs == 0 && littleWindowKeyTakePending && replayKeySelection)")
         if littleWindowHandoffs == 0 && littleWindowKeyTakePending {
             littleWindowKeyTakePending = false
-            takeRemoteSelection()
+            if replayKeySelection { takeRemoteSelection() }
         }
     }
 

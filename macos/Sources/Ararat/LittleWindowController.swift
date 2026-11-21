@@ -390,7 +390,8 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     /// Open in <space>: the page moves into that space as a Today tab with its contents (the
     /// §4.6 handoff, not a reload) and the Little Window closes.
     func performOpenIn(spaceID: String? = nil) {
-        guard !opening, let origin, origin.hasUsableHost,
+        guard !opening, let origin, !origin.isPrivateWindow, origin.hasUsableHost,
+              let workspace = origin.workspace, let engine = origin.adapter,
               let space = spaceID.flatMap({ id in model.spaces.first { $0.id == id } }) ?? model.destination,
               let tab = pageTab, model.openEnabled else { return }
         let url = tab.url
@@ -403,18 +404,29 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         // L1: a refused handoff leaves the Little Window open, so the tab must go back to the
         // item id it had (a page-only tab has none) rather than report the closed row.
         let previousItem = tab.itemId
-        func fail() {
-            opening = false
+        func fail(reselectGeneration: Int? = nil) {
+            @MainActor func finish() {
+                engine.endLittleWindowHandoff(replayKeySelection: false)
+                self.opening = false
+            }
             FileHandle.standardError.write(Data("ararat-trace: little-window open-in failed space=\(space.id)\n".utf8))
+            guard let reselectGeneration, let origin = self.origin, origin.hasUsableHost,
+                  origin.selectionGeneration == reselectGeneration,
+                  engine.session.queue.sync(execute: { engine.session.store?.snapshot(windowId: origin.windowID).shownSpaceId == space.id })
+            else { finish(); return }
+            origin.switchWorkspaceSpace(space.id, selectRow: true) { _ in finish() }
         }
-        origin.switchWorkspaceSpace(space.id) { [weak self, weak origin] in
-            guard let self, let origin, origin.hasUsableHost, let adapter = origin.workspace,
-                  let engine = origin.adapter else { fail(); return }
-            engine.beginLittleWindowHandoff()
-            adapter.createTab(url: url) { [weak self] result in
-                guard let self, case .success(let created) = result, let row = created.id else {
-                    engine.endLittleWindowHandoff()
-                    fail()
+        engine.beginLittleWindowHandoff()
+        engine.invalidateSelection()
+        origin.switchWorkspaceSpace(space.id, selectRow: false) { generation in
+            guard let generation else { fail(); return }
+            workspace.createTab(url: url, expectedSpace: space.id) { result in
+                guard case .success(let created) = result, let row = created.id else {
+                    if case .failure(let error) = result, !(error is CancellationError) {
+                        fail(reselectGeneration: generation)
+                    } else {
+                        fail()
+                    }
                     return
                 }
                 FileHandle.standardError.write(Data("ararat-trace: little-window row-created item=\(row) live=\(tab.liveId)\n".utf8))
@@ -422,23 +434,43 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
                 // reports the row instead of the core adopting the page elsewhere.
                 tab.itemId = row
                 self.handoff(tab: tab, row: row, space: space.id, previousItem: previousItem,
-                             deadline: deadline, attempt: 0, engine: engine)
+                             deadline: deadline, attempt: 0, generation: generation, workspace: workspace, engine: engine)
             }
         }
     }
 
     private func handoff(tab: any ARTabAPI, row: String, space: String, previousItem: String?,
-                         deadline: DispatchTime, attempt: Int, engine: EngineAdapter) {
-        guard let origin, origin.hasUsableHost, let host = origin.host else {
+                         deadline: DispatchTime, attempt: Int, generation: Int,
+                         workspace: WorkspaceAdapter, engine: EngineAdapter) {
+        func currentDestination() -> Runtime? {
+            guard let origin, origin.hasUsableHost, origin.selectionGeneration == generation,
+                  origin.host?.profileDirectory() == profileName,
+                  engine.session.queue.sync(execute: { engine.session.store?.snapshot(windowId: origin.windowID).shownSpaceId == space })
+            else { return nil }
+            return origin
+        }
+        func refuse() {
             tab.itemId = previousItem
-            closeRow(row)
-            engine.endLittleWindowHandoff()
+            workspace.close(id: row) { result in
+                @MainActor func finish() {
+                    engine.endLittleWindowHandoff(replayKeySelection: false)
+                    self.opening = false
+                }
+                guard let origin = currentDestination() else { finish(); return }
+                if case .failure(let error) = result { origin.report(error); finish(); return }
+                origin.switchWorkspaceSpace(space, selectRow: true) { _ in finish() }
+            }
+        }
+        guard let host = currentDestination()?.host,
+              let source = popup.host, !source.isClosing(), !source.isClosingAll(),
+              pageTab?.liveId == tab.liveId else {
+            refuse()
             return
         }
         // The item is set on the tab before the move (see performOpenIn), so the destination's
         // strip reports the row and the core maps the live tab to it.
-        if attempt == 0, let adapter = origin.adapter {
-            let mapped = adapter.session.queue.sync { adapter.session.store?.liveTab(item: row) }
+        if attempt == 0 {
+            let mapped = engine.session.queue.sync { engine.session.store?.liveTab(item: row) }
             FileHandle.standardError.write(Data("ararat-trace: little-window handoff-before live=\(tab.liveId) mapped=\(mapped ?? "nil")\n".utf8))
         }
         let live = tab.liveId
@@ -460,21 +492,13 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
             return
         }
         guard DispatchTime.now() < deadline else {
-            tab.itemId = previousItem
-            closeRow(row)
-            engine.endLittleWindowHandoff()
-            opening = false
+            refuse()
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
-            guard let self else { engine.endLittleWindowHandoff(); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) {
             self.handoff(tab: tab, row: row, space: space, previousItem: previousItem,
-                         deadline: deadline, attempt: attempt + 1, engine: engine)
+                         deadline: deadline, attempt: attempt + 1, generation: generation, workspace: workspace, engine: engine)
         }
-    }
-
-    private func closeRow(_ row: String) {
-        origin?.workspace?.close(id: row) { _ in }
     }
 
     // MARK: - Command bar (⌘L)
