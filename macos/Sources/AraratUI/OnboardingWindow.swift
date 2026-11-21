@@ -400,9 +400,14 @@ final class OnboardingContentView: NSView {
     }
 
     private func alsoRows() -> [OnboardingRowView] {
-        model.alsoRows.enumerated().map { index, title in
+        var rows = model.alsoRows.enumerated().map { index, title in
             OnboardingRowView(id: "onboarding-also-\(index)", title: title, subtitle: "", dimmed: false)
         }
+        if !model.passwordProfileNames.isEmpty {
+            rows.append(OnboardingRowView(id: "onboarding-also-passwords", title: "Passwords",
+                                          subtitle: model.passwordProfileNames.joined(separator: ", "), dimmed: false))
+        }
+        return rows
     }
 
     /// One row per step, the step's name only: the board's rows carry counts the call cannot

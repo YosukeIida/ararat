@@ -265,6 +265,7 @@ bool IsScratchPasswordProfile(const base::FilePath& path) {
   const auto* command = base::CommandLine::ForCurrentProcess();
   return profile_ &&
          (command->GetSwitchValueASCII("ararat-check") == "passwords" ||
+          command->GetSwitchValueASCII("ararat-check") == "arc-password-import" ||
           command->GetSwitchValueASCII("ararat-screen") == "password-prompt" ||
           command->GetSwitchValueASCII("ararat-screen") == "settings-passwords") &&
          command->HasSwitch("use-mock-keychain") &&

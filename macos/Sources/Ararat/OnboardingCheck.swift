@@ -74,7 +74,7 @@ extension Runtime {
         // The check holds the progress screen's import: `promptScreenScreenshot` spins the default
         // run loop while `screencapture` runs, so a scheduled import would redraw the window under
         // the capture. The phase releases it after the progress shot.
-        let model = OnboardingModel(storePath: path, data: OnboardingFixtures.showcase,
+        let model = OnboardingModel(storePath: path, data: OnboardingFixtures.showcaseWithPasswords,
                                     detector: OnboardingFixtures.FixtureSourceDetector(), defaultBrowser: setter,
                                     schedule: { [weak owner] block in owner?.onboardingPendingImport = block })
         let controller = OnboardingWindowController(model: model)
@@ -205,10 +205,10 @@ extension Runtime {
                             "Reading Profile Default · 11 pinned"]
             mark("space_rows", spaces == expected)
             let also = probe.alsoRows.map(\.text)
-            mark("also_rows", also == ["Favourites", "Looks", "Air Traffic Control routes", "Folder open states"])
-            // O4/O5, the site-controls rule: the rows have no producer, so they are absent.
+            mark("also_rows", also == ["Favourites", "Looks", "Air Traffic Control routes", "Folder open states",
+                                       "Passwords Default, University"])
             let all = (spaces + also).joined(separator: " ").lowercased()
-            mark("no_signin_rows", !all.contains("sign-in") && !all.contains("password") && !all.contains("archive") && !all.contains("history"))
+            mark("no_signin_rows", !all.contains("sign-in") && !all.contains("archive") && !all.contains("history"))
             guard capture("what-to-import") else { wait("capture what to import"); return }
             probe.click("onboarding-next")
             browserCheckPhase = 5
@@ -252,11 +252,14 @@ extension Runtime {
             // Every row has a producer in the report; the sign-in line and the unread look have
             // none in this fixture and are dropped (D10, O5).
             let texts = probe.reportLines
-            mark("report_lines", texts.count == 4
+            mark("report_lines", texts.count == 7
                  && texts.contains { $0.contains("2 folders were peeked") }
                  && texts.contains { $0.contains("2 folders were open in one Arc window") }
                  && texts.contains { $0.contains("1 route sent links to a profile") }
-                 && texts.contains { $0.contains("3 custom keyboard shortcuts") })
+                 && texts.contains { $0.contains("3 custom keyboard shortcuts") }
+                 && texts.contains("Default passwords: 2 added, 1 existing, 1 conflicts.")
+                 && texts.contains("1 Never rows skipped, 2 unreadable, 0 invalid.")
+                 && texts.contains("University: Access to Arc Safe Storage was not allowed"))
             mark("no_signin_line", !texts.contains { $0.lowercased().contains("sign-in") })
             // The store the flow wrote is the check's database and its fixture's spaces are in it.
             // The store may hold the empty-check space EngineAdapter makes before the window opens:

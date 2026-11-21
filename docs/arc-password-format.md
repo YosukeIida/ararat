@@ -13,3 +13,7 @@ With the owner present, set `ARC_KEYCHAIN_PATH` to the path of the keychain the 
 ```
 
 The Keychain command requests attributes only. The pinned Chromium build writes schema version `43`. The prefix `763130` is the hex encoding of `v10`. If a query returns no row or fails, record that observation as unconfirmed. The prefix describes only the sampled row.
+
+## Synthetic VM check
+
+In a development VM, pass `--ararat-check=arc-password-import`, `--use-mock-keychain`, `--user-data-dir=<scratch profile root>`, and `--ararat-db=<scratch workspace database>`. Use absolute paths inside a new temporary directory. Capture stdout and stderr separately, then run `macos/scripts/check-arc-password-output.sh <stdout> <stderr>`. Require exit 0 from both the app and the output check. The JSON report contains the condition results and import counts.
