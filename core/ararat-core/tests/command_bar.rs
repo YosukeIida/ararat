@@ -417,7 +417,7 @@ fn nonempty_results_are_limited_to_five_and_the_typed_row_counts() {
 #[test]
 fn unloaded_tabs_in_pinned_today_and_favorites_are_searchable_and_recent() {
     let mut ws = fixture();
-    for (id, title, parent, at) in [("tab-a", "Unloaded pinned", "pin-work", 3), ("tab-b", "Unloaded today", "today-work", 2), ("tab-mail", "Unloaded favorite", "fav-default", 1)] {
+    for (id, title, parent, at) in [("tab-a", "Unloaded pinned", "pin-work", 3), ("tab-b", "Unloaded today", "today-work", 2), ("tab-mail", "Unloaded favorite", "space-work:favorites", 1)] {
         let item = ws.items.get_mut(id).unwrap();
         item.membership.parent = Some(parent.into());
         item.lifecycle = Lifecycle::Unloaded;
@@ -483,7 +483,9 @@ fn switch_space_excludes_shown_space() {
 fn favorite_subtitle_is_favorite() {
     let ws = fixture();
     let rows = Index::new(&ws, "one", 0).candidates("mail");
-    assert_eq!(rows.iter().find(|s| matches!(&s.target, Target::Tab { id, .. } if id == "tab-mail")).unwrap().subtitle, "Favorite");
+    let favorite = rows.iter().find(|s| matches!(&s.target, Target::Tab { id, .. } if id == "tab-mail")).unwrap();
+    assert_eq!(favorite.subtitle, "Favorite");
+    assert_eq!(favorite.target, Target::Tab { id: "tab-mail".into(), space_id: Some("space-work".into()) });
 }
 
 #[test]
@@ -500,11 +502,10 @@ fn move_destinations_use_selected_tab_profile_even_if_shown_space_changes() {
 }
 
 #[test]
-fn favorite_move_destinations_use_favorites_profile_and_shown_space() {
+fn favorite_move_destinations_use_the_owner_even_when_the_sidebar_shows_a_sibling() {
     let mut ws = fixture();
     ws.show_space("one", "space-work").unwrap();
     ws.create_space("one", "Other Work", "space-other").unwrap();
-    ws.show_space("one", "space-work").unwrap();
     ws.select_item("one", "tab-mail").unwrap();
     let rows = Index::new(&ws, "one", 0).candidates("move tab");
     assert!(rows.iter().any(|s| matches!(&s.target, Target::MoveToSpace { id } if id == "space-other")));

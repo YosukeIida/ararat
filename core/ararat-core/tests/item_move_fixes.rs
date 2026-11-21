@@ -73,7 +73,7 @@ fn cross_profile_moves_and_wraps_are_atomic_errors() {
     let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0;
     let mut home = ws.items["tab-mail"].clone(); home.id = "home-tab".into(); home.membership.parent = Some("pin-home".into()); ws.apply(&Op::Put(Record::Item(home)));
     let before = ws.clone();
-    for (id, target) in [("tab-spec", "pin-home"), ("tab-spec", "today-home"), ("home-tab", "fav-default"), ("folder-docs", "pin-home"), ("split-1", "pin-home")] {
+    for (id, target) in [("tab-spec", "pin-home"), ("tab-spec", "today-home"), ("home-tab", "space-work:favorites"), ("folder-docs", "pin-home"), ("split-1", "pin-home")] {
         assert!(ws.move_item(id, target, 0, false).is_err()); assert_eq!(ws, before);
     }
     assert!(ws.create_folder("new", "New", "pin-home", 0, &["tab-spec".into()]).is_err()); assert_eq!(ws, before);

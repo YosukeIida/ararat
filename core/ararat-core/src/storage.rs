@@ -18,6 +18,7 @@ const BUSY_TIMEOUT: Duration = Duration::from_millis(200);
 // Why not one column per field: kinds written by a newer version must survive an older one
 // untouched (architecture 8.3), and an opaque body table keeps rows it cannot read.
 // shortcut: the journal is never trimmed; trim it once the sync client acknowledges uploads (phase 8).
+const SCHEMA_VERSION: i64 = 2;
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS records (
     kind TEXT NOT NULL,
@@ -70,7 +71,7 @@ impl Store {
         let conn = Connection::open(path)?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         let existing: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'records')", [], |row| row.get(0))?;
-        if version != 1 && (version != 0 || existing) { return Err(StoreError("unsupported database version; use a new database".into())); }
+        if version != SCHEMA_VERSION && (version != 0 || existing) { return Err(StoreError("unsupported database version; use a new database".into())); }
         let mode: String = conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))?;
         if mode != "wal" {
             return Err(StoreError(format!("journal_mode is {mode}, not wal")));
@@ -78,7 +79,7 @@ impl Store {
         // FULL rather than NORMAL: it also survives power loss, at one fsync per batch.
         conn.execute_batch("PRAGMA synchronous = FULL;")?;
         conn.execute_batch(SCHEMA)?;
-        if version == 0 { conn.pragma_update(None, "user_version", 1)?; }
+        if version == 0 { conn.pragma_update(None, "user_version", SCHEMA_VERSION)?; }
         conn.busy_timeout(BUSY_TIMEOUT)?;
         let workspace = load(&conn)?;
 

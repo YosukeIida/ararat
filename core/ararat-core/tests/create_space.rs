@@ -16,13 +16,14 @@ fn creating_appends_a_trimmed_space_in_the_current_profile_and_commits_its_roots
     let conn = rusqlite::Connection::open(&path).unwrap();
     let before: i64 = conn.query_row("SELECT count(*) FROM journal", [], |row| row.get(0)).unwrap();
     let ops = ws.create_space("one", "  Project Notes \n", "new-space").unwrap();
-    assert_eq!(ops.len(), 4);
+    assert_eq!(ops.len(), 5);
     let space = ws.spaces.last().unwrap();
     assert_eq!(space.id, "new-space");
     assert_eq!(space.title, "Project Notes");
     assert_eq!(space.profile, profile);
     assert!(space.order > last_order);
-    for root in [&space.pinned, &space.today] {
+    assert_eq!(space.favorites.as_deref(), Some("new-space:favorites"));
+    for root in [&space.pinned, &space.today, space.favorites.as_ref().unwrap()] {
         assert!(matches!(ws.items[root].kind, ItemKind::Container));
         assert_eq!(ws.items[root].membership.parent, None);
         assert!(ws.outline(root).is_empty());
@@ -31,7 +32,7 @@ fn creating_appends_a_trimmed_space_in_the_current_profile_and_commits_its_roots
     assert_eq!(ws.selected("one"), None);
     ws.check_tree().unwrap();
     store.write(ops); store.flush().unwrap();
-    assert_eq!(conn.query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap(), before + 3);
+    assert_eq!(conn.query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap(), before + 4);
     drop(store);
     assert_eq!(Store::open(&path).unwrap().1, ws);
 }

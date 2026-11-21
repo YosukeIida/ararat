@@ -296,7 +296,16 @@ func organizeCommandsActOnSelectedRowsAndRespectHiddenOrEditingStates() throws {
         if origin == "foreign" { #expect(f.moves.isEmpty) }
         else {
             let other = try #require(f.snapshot.spaces.first { $0.id == "other" })
-            #expect(f.moves.count == 1 && f.moves[0].1 == (origin == "today" ? other.todayId : other.pinnedId))
+            let destination: String
+            switch origin {
+            case "today": destination = other.todayId
+            case "favorite":
+                destination = try #require(other.favoritesId)
+                #expect(other.favorites.map(\.id) == [id])
+                #expect(f.space.favorites.isEmpty)
+            default: destination = other.pinnedId
+            }
+            #expect(f.moves.count == 1 && f.moves[0].1 == destination)
         }
     }
     do {

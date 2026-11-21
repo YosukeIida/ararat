@@ -72,7 +72,7 @@ fn a_collapsed_pinned_section_keeps_the_current_pin_visible() {
     ws.set_folder_collapsed("folder-docs", true).unwrap();
     assert_eq!(ids(&ws, "pin-work", Some("tab-spec")), ["folder-docs", "tab-spec"]);
     // Favourites and the other space's pinned list are other containers.
-    assert_eq!(ids(&ws, "fav-default", None), ["tab-mail"]);
+    assert_eq!(ids(&ws, "space-work:favorites", None), ["tab-mail"]);
     assert!(ws.outline_keeping("pin-home", Some("tab-spec")).is_empty());
 }
 

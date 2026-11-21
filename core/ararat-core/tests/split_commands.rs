@@ -328,10 +328,10 @@ fn a_split_member_moved_to_another_space_leaves_the_split() {
     replayed(&mut ws, |ws| ws.move_item("tab-a", "today-work", 0, false));
     assert_eq!(children(&ws, "today-work"), ["split-1"]);
     assert_eq!(children(&ws, "pin-work"), ["folder-docs"]);
-    // A member carried into the profile's favourites leaves the split the same way.
+    // A member carried into the same space's favourites leaves the split the same way.
     let mut ws = workspace();
-    replayed(&mut ws, |ws| ws.move_item("tab-b", "fav-default", 1, false));
-    assert_eq!(children(&ws, "fav-default"), ["tab-mail", "tab-b"]);
+    replayed(&mut ws, |ws| ws.move_item("tab-b", "space-work:favorites", 1, false));
+    assert_eq!(children(&ws, "space-work:favorites"), ["tab-mail", "tab-b"]);
     assert_eq!(children(&ws, "pin-work"), ["folder-docs", "tab-a"]);
 }
 

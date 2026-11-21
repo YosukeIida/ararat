@@ -25,6 +25,7 @@ pub struct ImportReport {
     pub skipped_unknown_styles: usize,
     pub malformed_rules: usize,
     pub unknown_space_looks: usize,
+    pub skipped_favourites_by_profile: HashMap<String, usize>,
     pub missing_key_bindings: bool,
     pub key_bindings_error: Option<String>,
     pub skipped_key_bindings: usize,
@@ -86,7 +87,58 @@ pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Op
             }
         }
     }
-    let mut workspace = Workspace { off_the_record: false, key_binding_overrides: HashMap::new(), folder_collapsed: HashMap::new(), section_collapsed: HashMap::new(), settings: crate::model::Settings::default(), spaces, favorites, items, windows: HashMap::new(), little_window_frame: None, little_window_device: crate::model::LittleWindowDevice::default(), download_device: crate::model::DownloadDevice::default(), history_purges: HashMap::new(), history_profiles: HashMap::new(), archive_after: HashMap::new(), last_selected: HashMap::new(), routing_rules: HashMap::new(), routing_default: crate::routing::Destination::default() };
+    for space in &spaces {
+        let id = space.favorites.as_ref().unwrap();
+        if items.contains_key(id) || spaces.iter().any(|space| &space.id == id) {
+            return Err(err(&format!("favourites root ID {id} is already in use")));
+        }
+        items.insert(id.clone(), Item::container(id.clone(), 0));
+    }
+    let mut source_roots = HashSet::new();
+    let mut skipped_roots = Vec::new();
+    for (profile, source) in favorites {
+        if !source_roots.insert(source.clone())
+            || spaces.iter().any(|space| space.owns_root(&source))
+            || items.get(&source).is_some_and(|item| !matches!(item.kind, ItemKind::Container))
+        {
+            return Err(err(&format!("invalid Arc favourites root {source}")));
+        }
+        let Some(target) = spaces.iter().find(|space| space.profile == profile)
+            .and_then(|space| space.favorites.as_ref()) else {
+                skipped_roots.push((profile, source));
+                continue;
+            };
+        for item in items.values_mut().filter(|item| item.membership.parent.as_ref() == Some(&source)) {
+            if !matches!(item.kind, ItemKind::Tab { .. }) {
+                return Err(err(&format!("Arc favourite {} is not a tab", item.id)));
+            }
+            item.membership.parent = Some(target.clone());
+        }
+        items.remove(&source);
+    }
+    if !skipped_roots.is_empty() {
+        let mut children = HashMap::<Id, Vec<Id>>::new();
+        for item in items.values().filter(|item| !matches!(item.kind, ItemKind::Container)) {
+            if let Some(parent) = &item.membership.parent {
+                children.entry(parent.clone()).or_default().push(item.id.clone());
+            }
+        }
+        for (profile, root) in skipped_roots {
+            let mut pending = vec![root];
+            let mut count = 0;
+            while let Some(id) = pending.pop() {
+                if items.remove(&id).is_some_and(|item| matches!(item.kind, ItemKind::Tab { .. })) {
+                    count += 1;
+                }
+                pending.extend(children.remove(&id).into_iter().flatten());
+            }
+            if count > 0 {
+                let name = match profile { Profile::Default => "Default".into(), Profile::Named(name) => name };
+                *report.skipped_favourites_by_profile.entry(name).or_default() += count;
+            }
+        }
+    }
+    let mut workspace = Workspace { spaces, items, ..Workspace::default() };
     // Arc's file is not trusted to be a tree; a cycle would make every later walk loop.
     workspace.repair_tree();
     workspace.check_tree().map_err(|e| err(&format!("sidebar is not a tree after repair: {e}")))?;
@@ -134,7 +186,7 @@ pub fn arc_sidebar(json: &str, windows_json: Option<&str>, key_bindings_json: Op
 }
 
 /// The five totals the import produced: spaces, every tab under a pinned container (splits and
-/// folders included), those folders, the distinct favourite tabs (one container serves a profile)
+/// folders included), those folders, the distinct favourite tabs
 /// and the spaces whose look imported. Routes are `imported_rules`, the routing import's counter.
 fn count_import(workspace: &Workspace, report: &mut ImportReport) {
     fn walk(workspace: &Workspace, container: &str, tabs: &mut usize, folders: &mut usize) {
@@ -156,7 +208,7 @@ fn count_import(workspace: &Workspace, report: &mut ImportReport) {
         if space.look.is_some() { report.spaces_with_look += 1; }
     }
     let mut favourites = HashSet::new();
-    for container in workspace.favorites.values() {
+    for container in workspace.spaces.iter().filter_map(|space| space.favorites.as_deref()) {
         for child in workspace.children(container) {
             if matches!(child.kind, ItemKind::Tab { .. }) { favourites.insert(child.id.clone()); }
         }
@@ -258,6 +310,7 @@ fn space(id: String, obj: &Value, order: String) -> Result<Space> {
     Ok(Space {
         pinned: container_id("pinned")?,
         today: container_id("unpinned")?,
+        favorites: Some(Space::favorites_id(&id)),
         title: obj["title"].as_str().unwrap_or_default().to_string(),
         profile: profile(&obj["profile"]),
         icon: obj["customInfo"]["iconType"]

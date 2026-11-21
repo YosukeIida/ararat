@@ -446,8 +446,7 @@ impl Live {
                 Op::Delete(crate::model::Kind::LastSelected, row) => row == &item,
                 _ => false,
             }).collect();
-            let space = before.list_for(&item).and_then(|(root, _)| before.spaces.iter()
-                .find(|space| space.today == root || space.pinned == root)).map(|space| space.id.clone());
+            let space = before.space_of(&item).map(|space| space.id.clone());
             self.close_undo.insert(command.id.clone(), CancelledClose { live: live.clone(), window, undo, bulk: true, space });
             self.pending.insert(command.id.clone(), (CommandKind::Close, item));
             targets.push((live, command));

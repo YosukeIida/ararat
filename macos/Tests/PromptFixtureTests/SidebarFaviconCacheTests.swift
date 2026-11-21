@@ -93,6 +93,29 @@ struct SidebarFaviconCacheTests {
         #expect(requests.urls == urls)
     }
 
+    @Test func independentFavoriteGridsReuseSharedURLsAndIgnoreRemovedRows() throws {
+        let requests = FaviconRequests()
+        let work = faviconRow("work", parent: "work:favorites")
+        let other = faviconRow("other", "https://other.test/", parent: "other:favorites")
+        let sameURL = faviconRow("same-url", parent: "other:favorites")
+        let icon = NSImage(size: NSSize(width: 16, height: 16))
+
+        #expect(requests.images([work, other, sameURL], shown: [work]).isEmpty)
+        let workReply = try #require(requests.replies.first)
+        workReply(icon)
+        let switched = requests.images([work, other, sameURL], shown: [other, sameURL])
+        #expect(switched[sameURL.id] === icon)
+        #expect(switched[other.id] == nil)
+        #expect(requests.urls == [work.url!, other.url!])
+
+        let otherReply = try #require(requests.replies.last)
+        _ = requests.images([work, sameURL], shown: [work])
+        otherReply(icon)
+        #expect(requests.changes == 1)
+        #expect(requests.images([work, other, sameURL], shown: [other])[other.id] == nil)
+        #expect(requests.urls == [work.url!, other.url!, other.url!])
+    }
+
     @Test func cachesNilUntilTheItemGoesLive() {
         let requests = FaviconRequests()
         let row = faviconRow()

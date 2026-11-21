@@ -71,6 +71,17 @@ fn old_database_versions_are_rejected_without_a_migration() {
 }
 
 #[test]
+fn version_one_database_is_refused_without_changes() {
+    let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("archive-version-one.sqlite");
+    let _ = std::fs::remove_file(&path);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA user_version = 1; CREATE TABLE records (kind TEXT, id TEXT, body TEXT);").unwrap();
+    assert_eq!(Store::open(&path).err().unwrap().0, "unsupported database version; use a new database");
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+    assert_eq!(version, 1);
+}
+
+#[test]
 fn deleting_archived_tabs_removes_only_the_item_and_persists_a_journal_tombstone() {
     let mut ws = workspace();
     for id in ["tab-a", "tab-b"] { ws.close_item(id).unwrap(); }

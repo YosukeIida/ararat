@@ -48,8 +48,7 @@ impl Workspace {
                     && matches!(self.items[&id].lifecycle, crate::model::Lifecycle::Open | crate::model::Lifecycle::Unloaded)
                     && self.items[&id].membership.parent.as_ref().is_some_and(|parent|
                         parent == &root || !matches!(self.items[parent].lifecycle, crate::model::Lifecycle::Open | crate::model::Lifecycle::Unloaded))
-                    && !self.spaces.iter().any(|s| s.pinned == root || s.today == root)
-                    && !self.favorites.values().any(|id| *id == root) => Some(Walk::Orphan(id)),
+                    && !self.spaces.iter().any(|space| space.owns_root(&root)) => Some(Walk::Orphan(id)),
                 Walk::Root(_) => None,
                 broken => Some(broken),
             });
@@ -126,7 +125,7 @@ impl Workspace {
                 _ => None,
             });
         let usable = || self.spaces.iter().filter(|s| self.is_root(&s.today));
-        root.and_then(|r| usable().find(|s| s.pinned == r || s.today == r))
+        root.and_then(|r| usable().find(|s| s.owns_root(&r)))
             .or_else(|| usable().next())
             .map(|s| s.today.clone())
     }

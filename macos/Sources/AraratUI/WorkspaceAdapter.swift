@@ -172,15 +172,6 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         }, completion: completion)
     }
 
-    public func firstFavorite(id: String, space: String, index: Int, completion: @escaping Completion<WorkspaceSnapshot>) {
-        enqueueEdit({
-            let store = try self.opened()
-            let snapshot = try store.ensureFavorites(windowId: self.windowID, spaceId: space, containerId: UUID().uuidString)
-            guard let container = snapshot.spaces.first(where: { $0.id == space })?.favoritesId else { throw CoreError.Edit(message: "favorites container missing") }
-            return try store.moveItem(windowId: self.windowID, id: id, container: container, index: UInt32(index), openFolder: false)
-        }, completion: completion)
-    }
-
     public func moveIfLive(id: String, container: String, index: Int, openFolder: Bool, expectedLive: String, completion: @escaping Completion<WorkspaceSnapshot?>) {
         enqueueEdit({
             let store = try self.opened()

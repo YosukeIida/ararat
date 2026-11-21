@@ -216,7 +216,6 @@ fn journal_replay_excludes_usage_and_starts_a_new_local_idle_period() {
     }
     assert_eq!(replay.items, ws.items);
     assert_eq!(replay.spaces, ws.spaces);
-    assert_eq!(replay.favorites, ws.favorites);
     assert_eq!(replay.archive_after, ws.archive_after);
     assert!(replay.last_selected.is_empty());
     replay.auto_archive(1_800_000_000_000).unwrap();

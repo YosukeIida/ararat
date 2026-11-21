@@ -43,7 +43,7 @@ enum SidebarDrop: Equatable {
     case refused
     case insert(container: String, index: Int, lineY: CGFloat, depth: UInt32)
     case folder(String)
-    case favorites(container: String?, index: Int)
+    case favorites(container: String, index: Int)
     case dock(space: String, container: String, index: Int)
     // U25d: over one half of the page, which makes a split with the tab it was over.
     case split(SplitSide)
@@ -51,7 +51,7 @@ enum SidebarDrop: Equatable {
     var move: (container: String, index: Int)? {
         switch self {
         case let .insert(container, index, _, _), let .dock(_, container, index): (container, index)
-        case let .favorites(container, index): container.map { ($0, index) }
+        case let .favorites(container, index): (container, index)
         case let .folder(id): (id, 0)
         case .refused, .split: nil
         }
@@ -82,6 +82,11 @@ func resolveSidebarDrop(position: CGPoint, geometry g: SidebarDragGeometry, drag
     }
     if let cell = g.dock.first(where: { $0.frame.contains(position) }) {
         guard cell.space.profileKey == g.space.profileKey else { return .refused }
+        if g.space.favorites.contains(where: { $0.id == dragged.id }) {
+            guard let container = cell.space.favoritesId else { return .refused }
+            let index = cell.space.favorites.filter { $0.id != dragged.id }.count
+            return .dock(space: cell.space.id, container: container, index: index)
+        }
         let cameFromToday = g.space.today.contains { $0.id == dragged.id }
         let container = cameFromToday && dragged.kind != .folder ? cell.space.todayId : cell.space.pinnedId
         guard !container.isEmpty else { return .refused }
@@ -89,13 +94,13 @@ func resolveSidebarDrop(position: CGPoint, geometry g: SidebarDragGeometry, drag
                      index: max(0, Int(container == cell.space.todayId ? cell.space.todayCount : cell.space.pinnedCount) - (dragged.parentId == container ? 1 : 0)))
     }
     if g.favorites.contains(position) {
-        guard dragged.kind == .tab else { return .refused }
+        guard dragged.kind == .tab, let container = g.space.favoritesId else { return .refused }
         let count = g.space.favorites.filter { $0.id != dragged.id }.count
         let columns = SidebarDragMetrics.favoriteColumns(width: g.favorites.width, slots: count + 1)
         let pitch = (g.favorites.width + 8) / CGFloat(columns)
         let column = min(columns - 1, max(0, Int((position.x - g.favorites.minX) / pitch)))
         let line = max(0, Int((position.y - g.favorites.minY) / 55))
-        return .favorites(container: g.space.favoritesId, index: min(count, line * columns + column))
+        return .favorites(container: container, index: min(count, line * columns + column))
     }
     if g.pinnedArea.contains(position) {
         // A row dropped on the space name pins at the top of pinned, with or without pins; the

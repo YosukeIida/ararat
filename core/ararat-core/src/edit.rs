@@ -364,13 +364,6 @@ impl Workspace {
         false
     }
 
-    // The space whose list holds the item (None for favourites): what "another space" means for
-    // a member that leaves its split when it moves.
-    fn space_id(&self, id: &str) -> Option<Id> {
-        let (root, _) = self.list_for(id)?;
-        self.spaces.iter().find(|space| space.pinned == root || space.today == root).map(|space| space.id.clone())
-    }
-
     // Whether the row lives in a Today list (the private workspace's only list).
     pub fn is_in_today(&self, id: &str) -> bool {
         self.list_for(id).is_some_and(|(_, today)| today)
@@ -494,7 +487,7 @@ impl Workspace {
         if matches!(item.kind, ItemKind::Folder) && (today || !self.spaces.iter().any(|s| s.pinned == root)) {
             return Err(EditError("folders belong in pinned".into()));
         }
-        if self.favorites.values().any(|id| id == root) && !matches!(item.kind, ItemKind::Tab { .. }) {
+        if self.spaces.iter().any(|space| space.favorites.as_deref() == Some(root)) && !matches!(item.kind, ItemKind::Tab { .. }) {
             return Err(EditError("favorites hold tabs only".into()));
         }
         let mut parent = Some(container);
@@ -542,9 +535,7 @@ impl Workspace {
     }
 
     pub fn item_profile(&self, id: &str) -> Option<&crate::model::Profile> {
-        let (root, _) = self.list_for(id)?;
-        self.spaces.iter().find(|s| s.pinned == root || s.today == root).map(|s| &s.profile)
-            .or_else(|| self.favorites.iter().find(|(_, container)| container.as_str() == root).map(|(p, _)| p))
+        self.space_of(id).map(|space| &space.profile)
     }
 
     pub fn move_item(&mut self, id: &str, container: &str, index: usize, open_folder: bool) -> Result<Vec<Op>, EditError> {
@@ -558,8 +549,11 @@ impl Workspace {
         // space's list as a pane (the HANDOVER finding). The destination is judged before
         // anything changes, and the detach and the move stay one transaction; after it the row
         // is a top-level tab and the ordinary rule applies.
+        let destination_space = self.space_of(container);
         if self.items.get(id).is_some_and(|item| matches!(item.kind, ItemKind::Tab { .. }) && matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
-            && self.pane_split(id).is_some() && self.space_id(id) != self.space_id(container) {
+            && self.pane_split(id).is_some()
+            && (self.space_of(id).map(|space| &space.id) != destination_space.map(|space| &space.id)
+                || destination_space.and_then(|space| space.favorites.as_deref()) == Some(container)) {
             let item = self.items[id].clone();
             self.check_destination(&item, container)?;
             if self.item_profile(id) != self.item_profile(container) {
@@ -811,7 +805,7 @@ impl Workspace {
         if self.spaces.len() == 1 { return Err(EditError("cannot delete the last space".into())); }
         let space = &self.spaces[index];
         let neighbour = &self.spaces[if index + 1 < self.spaces.len() { index + 1 } else { index - 1 }].id;
-        let changing: HashSet<_> = [&space.pinned, &space.today].into_iter()
+        let changing: HashSet<_> = [&space.pinned, &space.today].into_iter().chain(space.favorites.iter())
             .flat_map(|root| self.outline_entries(root).into_iter().map(|(_, item, _)| item.id.clone())).collect();
         let changed_at = self.lifecycle_time();
         let mut ids: Vec<_> = changing.iter().collect();
@@ -847,33 +841,20 @@ impl Workspace {
         Ok(ops)
     }
 
-    pub fn ensure_favorites(&mut self, space_id: &str, id: &str) -> Result<Vec<Op>, EditError> {
-        let profile = self.spaces.iter().find(|space| space.id == space_id)
-            .ok_or_else(|| EditError(format!("unknown space {space_id}")))?.profile.clone();
-        if self.favorites.contains_key(&profile) { return Ok(Vec::new()); }
-        if id.trim().is_empty() || self.items.contains_key(id) || self.spaces.iter().any(|space| space.id == id) {
-            return Err(EditError("container id already exists or is empty".into()));
-        }
-        let item = crate::model::Item {
-            id: id.into(), membership: crate::model::Membership { parent: None, order: crate::order::key_between(None, None), hlc: Default::default(), previous_parent: None },
-            title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: self.lifecycle_time(), archive: None,
-        };
-        Ok(self.commit_edit(vec![Op::Put(Record::Item(item)), Op::Put(Record::Favorites { profile, container: id.into() })]))
-    }
-
     pub fn create_space(&mut self, window: &str, name: &str, id: &str) -> Result<Vec<Op>, EditError> {
         let name = name.trim();
         if name.is_empty() { return Err(EditError("space name is empty".into())); }
         let pinned = format!("{id}:pinned");
         let today = format!("{id}:today");
-        if id.trim().is_empty() || [id, pinned.as_str(), today.as_str()].iter().any(|id| {
-            self.items.contains_key(*id) || self.spaces.iter().any(|space| space.id == *id)
+        let favorites = (!self.is_private()).then(|| crate::model::Space::favorites_id(id));
+        if id.trim().is_empty() || [id, pinned.as_str(), today.as_str()].into_iter().chain(favorites.as_deref()).any(|id| {
+            self.items.contains_key(id) || self.spaces.iter().any(|space| space.id == id)
         }) { return Err(EditError("space id already exists or is empty".into())); }
         let profile = self.shown_space(window).and_then(|id| self.spaces.iter().find(|space| space.id == id))
             .map_or(crate::model::Profile::Default, |space| space.profile.clone());
         let space = crate::model::Space {
             id: id.into(), order: crate::order::key_between(self.spaces.last().map(|space| space.order.as_str()), None),
-            title: name.into(), profile, icon: None, look: None, pinned: pinned.clone(), today: today.clone(),
+            title: name.into(), profile, icon: None, look: None, pinned: pinned.clone(), today: today.clone(), favorites: favorites.clone(),
         };
         let changed_at = self.lifecycle_time();
         let mut ops = self.stamp_outgoing(window, None, changed_at);
@@ -882,11 +863,8 @@ impl Workspace {
         state.space_history.insert(0, id.into());
         state.select(None);
         ops.push(Op::Put(Record::Space(space)));
-        for id in [pinned, today] {
-            ops.push(Op::Put(Record::Item(crate::model::Item {
-                id, membership: crate::model::Membership { parent: None, order: crate::order::key_between(None, None), hlc: Default::default(), previous_parent: None },
-                title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: changed_at, archive: None,
-            })));
+        for id in [pinned, today].into_iter().chain(favorites) {
+            ops.push(Op::Put(Record::Item(crate::model::Item::container(id, changed_at))));
         }
         state.changed_at = changed_at;
         ops.push(Op::Put(Record::Window(state)));
@@ -1048,8 +1026,7 @@ impl Workspace {
     pub fn restore_item(&mut self, window: &str, id: &str) -> Result<Vec<Op>, EditError> {
         let mut item = self.archive().into_iter().find(|item| item.id == id).cloned()
             .ok_or_else(|| EditError(format!("item {id} is not an archived tab")))?;
-        let root = self.list_for(id).map(|(root, _)| root);
-        let space = self.spaces.iter().find(|space| root == Some(space.today.as_str()) || root == Some(space.pinned.as_str()))
+        let space = self.space_of(id)
             .or_else(|| self.shown_space(window).and_then(|id| self.spaces.iter().find(|space| space.id == id)))
             .ok_or_else(|| EditError("no space to restore into".into()))?;
         let folder = item.membership.parent.as_deref().and_then(|id| self.items.get(id))
@@ -1239,7 +1216,7 @@ impl Workspace {
 
     // Clear Today (D6): the space's whole Today list goes to the Archive in one batch —
     // loaded and unloaded rows, and the tabs inside a split row — so the undo toast reverses
-    // it as one step. Pins and the profile's favourites are other lists and keep their tabs.
+    // it as one step. Pins and favourites are other lists and keep their tabs.
     // Every archived row shares one instant, which is what makes the batch read as one action.
     pub fn clear_today(&mut self, space: &str) -> Result<(Vec<Op>, ClearTodayBatch), EditError> {
         self.check_tree().map_err(EditError)?;
@@ -1411,17 +1388,14 @@ impl Workspace {
             item = self.items.get(parent)?;
         }
         if item.membership.parent.is_some() { return None; }
-        self.spaces.iter().find_map(|space| {
-            if space.today == item.id { Some((space.today.as_str(), true)) }
-            else if space.pinned == item.id { Some((space.pinned.as_str(), false)) } else { None }
-        }).or_else(|| self.favorites.values().find(|root| **root == item.id).map(|root| (root.as_str(), false)))
+        self.spaces.iter().find(|space| space.owns_root(&item.id))
+            .map(|space| (item.id.as_str(), space.today == item.id))
     }
 
     // The selection's own test for "does this row belong to the space the window shows",
     // shared with the live coordinator: the row's outermost container decides.
     pub(crate) fn is_in_space(&self, id: &str, space: &str) -> bool {
-        let Some(space) = self.spaces.iter().find(|entry| entry.id == space) else { return false };
-        self.list_for(id).is_some_and(|(root, _)| root == space.today || root == space.pinned || self.favorites.get(&space.profile).is_some_and(|id| id == root))
+        self.space_of(id).is_some_and(|owner| owner.id == space)
     }
 
     fn successor_group(&self, id: &str, excluded: &HashSet<Id>) -> Option<Id> {
@@ -1760,11 +1734,10 @@ impl Workspace {
     }
 
     // The named profiles the workspace carries, from every record that is per profile: a
-    // named profile outlives its spaces (favorites and the archive threshold remain), so
+    // named profile outlives its spaces (the archive threshold remains), so
     // the spaces list alone is not the whole answer.
     fn space_profiles(&self) -> impl Iterator<Item = &Profile> {
         self.spaces.iter().map(|s| &s.profile)
-            .chain(self.favorites.keys())
             .chain(self.archive_after.keys())
     }
 

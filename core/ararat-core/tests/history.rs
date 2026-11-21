@@ -195,7 +195,7 @@ fn pinned_and_favorite_unloads_skip_history_from_another_space() {
 }
 
 #[test]
-fn shared_favorite_unload_uses_each_windows_shown_space() {
+fn favorite_unload_uses_each_windows_shown_space_after_a_move() {
     let mut ws = workspace();
     ws.spaces[1].profile = ws.spaces[0].profile.clone();
     ws.items.get_mut("y0").unwrap().membership.parent = Some("today-home".into());
@@ -203,6 +203,7 @@ fn shared_favorite_unload_uses_each_windows_shown_space() {
         for id in ["y0", "y1", "tab-mail"] { ws.select_item(window, id).unwrap(); }
     }
     ws.show_space("two", "space-home").unwrap();
+    ws.move_item("tab-mail", "space-home:favorites", 0, false).unwrap();
     ws.close_item("tab-mail").unwrap();
     assert_eq!(ws.selected("one"), Some("y1"));
     assert_eq!(ws.selected("two"), Some("y0"));
@@ -211,14 +212,14 @@ fn shared_favorite_unload_uses_each_windows_shown_space() {
 }
 
 #[test]
-fn a_profile_favorite_is_a_candidate_in_each_space_of_that_profile() {
+fn favorite_is_a_successor_only_in_its_own_space() {
     let mut ws = workspace();
     ws.spaces[1].profile = ws.spaces[0].profile.clone();
     ws.items.get_mut("y0").unwrap().membership.parent = Some("today-home".into());
     ws.show_space("one", "space-home").unwrap();
     for id in ["tab-mail", "y0"] { ws.select_item("one", id).unwrap(); }
     ws.close_item("y0").unwrap();
-    assert_eq!(ws.selected("one"), Some("tab-mail"));
+    assert_eq!(ws.selected("one"), None);
 }
 
 #[test]

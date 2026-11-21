@@ -46,7 +46,7 @@ fn clearing_today_archives_every_row_in_one_batch_and_keeps_the_other_lists() {
     let mut batch = archived(&ops);
     batch.sort();
     assert_eq!(batch, ["a", "b"]);
-    // Pins and the profile's favourites keep their tabs.
+    // Pins and favourites keep their tabs.
     for (id, lifecycle) in pins {
         assert_eq!(ws.items[&id].lifecycle, lifecycle, "{id}");
     }

@@ -272,7 +272,6 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 _ = try opened.createSpace(windowId: windowID, name: "Work", spaceId: "organize-work")
                 _ = try opened.createSpace(windowId: windowID, name: "Other", spaceId: "organize-other")
                 try opened.showSpace(windowId: windowID, spaceId: "organize-work")
-                _ = try opened.ensureFavorites(windowId: windowID, spaceId: "organize-work", containerId: "organize-favorites")
                 _ = try opened.createFolder(windowId: windowID, id: "organize-outer", name: "Outer", container: "organize-work:pinned", index: 0, wrapping: [])
                 _ = try opened.createFolder(windowId: windowID, id: "organize-inner", name: "Inner", container: "organize-outer", index: 0, wrapping: [])
                 _ = try opened.setFolderCollapsed(windowId: windowID, id: "organize-inner", collapsed: true)
@@ -280,19 +279,14 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     let snapshot = try opened.createTab(windowId: windowID, url: "about:blank?organize-\(name)")
                     guard let id = snapshot.selectedId else { throw NSError(domain: "Ararat.organize", code: 1) }
                     if index < 4 { _ = try opened.moveItem(windowId: windowID, id: id, container: "organize-work:pinned", index: UInt32(index + 1), openFolder: false) }
-                    if index == 4 || index == 5 { _ = try opened.moveItem(windowId: windowID, id: id, container: "organize-favorites", index: UInt32(index - 4), openFolder: false) }
+                    if index == 4 || index == 5 { _ = try opened.moveItem(windowId: windowID, id: id, container: "organize-work:favorites", index: UInt32(index - 4), openFolder: false) }
                 }
-                let firstFavorite = """
-                {"sidebar":{"containers":[{"global":{}},{"spaces":["organize-first",{"id":"organize-first","title":"First Favorite","profile":{"custom":{"_0":{"directoryBasename":"Profile 1"}}},"containerIDs":["pinned","first-pinned","unpinned","first-today"]}],"topAppsContainerIDs":[],"items":["first-pinned",{"id":"first-pinned","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"organize-first"}}}}},"first-today",{"id":"first-today","parentID":null,"childrenIds":[],"data":{"itemContainer":{"containerType":{"spaceItems":{"_0":"organize-first"}}}}}]}]}}
-                """
-                _ = try opened.importArcSidebar(windowId: windowID, json: firstFavorite, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil)
-                try opened.showSpace(windowId: windowID, spaceId: "organize-first")
+                try opened.showSpace(windowId: windowID, spaceId: "organize-other")
                 _ = try opened.createTab(windowId: windowID, url: "about:blank?organize-first")
                 try opened.showSpace(windowId: windowID, spaceId: "organize-work")
             } else if seedSidebar {
                 _ = try opened.createSpace(windowId: windowID, name: "Sidebar", spaceId: "sidebar-work")
                 try opened.showSpace(windowId: windowID, spaceId: "sidebar-work")
-                _ = try opened.ensureFavorites(windowId: windowID, spaceId: "sidebar-work", containerId: "sidebar-favorites")
                 _ = try opened.createFolder(windowId: windowID, id: "sidebar-folder", name: "Folder", container: "sidebar-work:pinned", index: 0, wrapping: [])
                 _ = try opened.createFolder(windowId: windowID, id: "sidebar-empty", name: "Empty", container: "sidebar-work:pinned", index: 1, wrapping: [])
                 func sidebarTab(_ name: String) throws -> String {
@@ -365,11 +359,20 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 if seedDock {
                     let look = Look(colors: [LookColor(red: 0.4, green: 0.3, blue: 0.8, x: 0.7, y: 0.5)], opacity: 0.5, grain: 0, glass: false, appearance: .auto)
                     _ = try opened.setSpaceLook(windowId: windowID, spaceId: "default", look: look)
+                    func seedDockFavorite(in space: String) throws {
+                        let snapshot = try opened.createTab(windowId: windowID, url: "about:blank?dock-favorite-\(space)")
+                        guard let item = snapshot.selectedId else { throw NSError(domain: "Ararat.dock", code: 1) }
+                        _ = try opened.moveItem(windowId: windowID, id: item, container: "\(space):favorites", index: 0, openFolder: false)
+                    }
+                    try seedDockFavorite(in: "default")
                     for index in 0..<11 {
                         let id = "dock-\(index)"
                         _ = try opened.createSpace(windowId: windowID, name: "Space \(index + 1)", spaceId: id)
                         _ = try opened.setSpaceLook(windowId: windowID, spaceId: id, look: look)
-                        if index == 0 { _ = try opened.createTab(windowId: windowID, url: "about:blank?dock-drag") }
+                        if index == 0 {
+                            try seedDockFavorite(in: id)
+                            _ = try opened.createTab(windowId: windowID, url: "about:blank?dock-drag")
+                        }
                     }
                     _ = try opened.moveSpace(windowId: windowID, spaceId: "named", index: 12)
                     try opened.showSpace(windowId: windowID, spaceId: "default")

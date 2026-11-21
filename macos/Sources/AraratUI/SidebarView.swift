@@ -164,7 +164,6 @@ public final class SidebarView: NSView {
     }
 
     public var onMove: ((String, String, Int, Bool, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
-    public var onFirstFavorite: ((String, String, Int, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
     public var onOpenFolder: ((String, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
     // U25d: the segment menu's commands, the page-half drop and its indicator. `onMakeSplit`
     // answers whether the split was made, so a refused drop sends the copy back.
@@ -701,6 +700,14 @@ public final class SidebarView: NSView {
     }
 
     public var dockCheckView: SpaceDockView { dock }
+
+    public var dockCheckFavoritePages: [String: Set<String>] {
+        var pages: [String: Set<String>] = [:]
+        for page in [self] + scrollPreviews {
+            if let id = page.snapshotSpace?.id { pages[id] = Set(page.favoriteTiles.keys) }
+        }
+        return pages
+    }
 
     public func dockCheckEnableDragAnimation() {
         guard CommandLine.arguments.contains(where: { $0 == "--ararat-check=dock" || $0 == "--ararat-screen=dock" }) else { return }
@@ -2933,13 +2940,6 @@ extension SidebarView {
                 guard let self, self.dragGeneration == generation else { return }
                 self.settleDrag(accepted: accepted)
             }
-        } else if case .favorites(nil, let index) = target, let space = snapshotSpace, let onFirstFavorite {
-            let generation = dragGeneration
-            onFirstFavorite(state.row.id, space.id, index) { [weak self] snapshot in
-                guard let self, self.dragGeneration == generation else { return }
-                if let snapshot { self.replaceSnapshot(snapshot) }
-                self.settleDrag(accepted: snapshot != nil)
-            }
         } else if let move = target.move, let onMove {
             let pinSpace = pinFromTodaySpace(id: state.row.id, container: move.container)
             let generation = dragGeneration
@@ -3284,7 +3284,7 @@ extension SidebarView: NSMenuDelegate {
         guard snapshot.spaces.count > 1, snapshot.spaces.contains(where: { $0.id == id }), let window else { return }
         let alert = NSAlert()
         alert.messageText = "Delete Space?"
-        alert.informativeText = "Its pinned and Today tabs will move to the Archive. Favorites will remain available in their profile. This cannot be undone."
+        alert.informativeText = "Its favorites, pinned tabs, and Today tabs will move to the Archive. This cannot be undone."
         let delete = alert.addButton(withTitle: "Delete Space")
         delete.hasDestructiveAction = true
         alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
@@ -3382,6 +3382,11 @@ extension SidebarView: NSMenuDelegate {
                   snapshot.spaces.indices.contains(number - 1) else { return }
             let target = snapshot.spaces[number - 1]
             guard target.id != space.id, target.profileKey == space.profileKey else { return }
+            if space.favorites.contains(where: { $0.id == row.id }) {
+                guard let container = target.favoritesId else { return }
+                menuMove(row.id, container: container, index: target.favorites.count)
+                return
+            }
             let pinned = !space.today.contains { $0.id == row.id }
             menuMove(row.id, container: pinned ? target.pinnedId : target.todayId,
                      index: Int(pinned ? target.pinnedCount : target.todayCount))
