@@ -281,9 +281,18 @@ public final class WorkspaceAdapter: @unchecked Sendable {
             if let expectedSpace {
                 snapshot = try self.spaceSwitchLock.withLock {
                     guard self.spaceSwitchGeneration == generation, store.snapshot(windowId: self.windowID).shownSpaceId == expectedSpace else {
-                        throw CoreError.Edit(message: "tab destination changed")
+                        throw CancellationError()
                     }
-                    return try store.createTab(windowId: self.windowID, url: url)
+                    let previous = store.selectedItem(windowId: self.windowID)
+                    do {
+                        return try store.createTab(windowId: self.windowID, url: url)
+                    } catch let error as CoreError {
+                        // A failed flush leaves the new row selected in memory and its write queued.
+                        if case .Store = error, let row = store.selectedItem(windowId: self.windowID), row != previous {
+                            _ = try? store.closeItem(windowId: self.windowID, id: row)
+                        }
+                        throw error
+                    }
                 }
             } else {
                 snapshot = try store.createTab(windowId: self.windowID, url: url)

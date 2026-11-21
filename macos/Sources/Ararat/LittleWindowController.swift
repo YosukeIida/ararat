@@ -404,10 +404,17 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         // L1: a refused handoff leaves the Little Window open, so the tab must go back to the
         // item id it had (a page-only tab has none) rather than report the closed row.
         let previousItem = tab.itemId
-        func fail() {
-            engine.endLittleWindowHandoff(replayKeySelection: false)
-            opening = false
+        func fail(reselectGeneration: Int? = nil) {
+            @MainActor func finish() {
+                engine.endLittleWindowHandoff(replayKeySelection: false)
+                self.opening = false
+            }
             FileHandle.standardError.write(Data("ararat-trace: little-window open-in failed space=\(space.id)\n".utf8))
+            guard let reselectGeneration, let origin = self.origin, origin.hasUsableHost,
+                  origin.selectionGeneration == reselectGeneration,
+                  engine.session.queue.sync(execute: { engine.session.store?.snapshot(windowId: origin.windowID).shownSpaceId == space.id })
+            else { finish(); return }
+            origin.switchWorkspaceSpace(space.id, selectRow: true) { _ in finish() }
         }
         engine.beginLittleWindowHandoff()
         engine.invalidateSelection()
@@ -415,7 +422,11 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
             guard let generation else { fail(); return }
             workspace.createTab(url: url, expectedSpace: space.id) { result in
                 guard case .success(let created) = result, let row = created.id else {
-                    fail()
+                    if case .failure(let error) = result, !(error is CancellationError) {
+                        fail(reselectGeneration: generation)
+                    } else {
+                        fail()
+                    }
                     return
                 }
                 FileHandle.standardError.write(Data("ararat-trace: little-window row-created item=\(row) live=\(tab.liveId)\n".utf8))

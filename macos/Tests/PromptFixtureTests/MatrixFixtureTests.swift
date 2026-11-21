@@ -3,6 +3,7 @@ import AraratEngineAPI
 @testable import AraratKit
 import AraratUI
 import ObjectiveC.runtime
+import SQLite3
 import Testing
 @testable import Ararat
 
@@ -508,7 +509,7 @@ func aFailedLittleWindowHandoffReplaysTheKeySelection() async throws {
 }
 
 private enum LittleWindowOpenInOutcome: CaseIterable {
-    case transferred, refused, superseded
+    case transferred, refused, superseded, createFailed
 }
 
 @Test(arguments: LittleWindowOpenInOutcome.allCases) @MainActor
@@ -518,8 +519,9 @@ private func littleWindowOpenInTransfersThePageOrRollsBackTheMove(outcome: Littl
     defer { try? FileManager.default.removeItem(at: dir) }
     let window = "destination"
     let space = "handoff-space"
+    let path = dir.appendingPathComponent("db").path
     let session = WorkspaceSession()
-    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: window,
+    let engine = try EngineAdapter(path: path, windowID: window,
                                    card: NSView(), seedProfiles: true, session: session)
     let (target, host) = matrixFake()
     let (source, popupHost) = matrixFake()
@@ -558,6 +560,35 @@ private func littleWindowOpenInTransfersThePageOrRollsBackTheMove(outcome: Littl
                                             url: original.url, commandBarVisible: false)
     defer { popup.littleWindow = nil }
     try await matrixWait { controller.model.openEnabled }
+    if outcome == .createFailed {
+        try session.queue.sync { try session.store!.flush() }
+        var connection: OpaquePointer?
+        defer {
+            target.onSetProfile = nil
+            sqlite3_close(connection)
+        }
+        try #require(sqlite3_open(path, &connection) == SQLITE_OK)
+        var preparations = 0
+        target.onSetProfile = {
+            preparations += 1
+            if preparations == 1 {
+                #expect(sqlite3_exec(connection, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK)
+            } else {
+                #expect(session.queue.sync { session.store?.lastError() } != nil)
+                #expect(sqlite3_exec(connection, "ROLLBACK", nil, nil, nil) == SQLITE_OK)
+            }
+        }
+        controller.performOpenIn(spaceID: space)
+        try await matrixWait(polls: 400) { target.active == saved }
+        #expect(preparations == 2)
+        #expect(runtime.snapshot.selectedId == saved)
+        #expect(snapshot().spaces.first { $0.id == space }?.today.isEmpty == true)
+        #expect(target.entries.map(\.itemId) == [saved])
+        #expect(target.handoffAttempts == 0)
+        #expect(original.itemId == "original" && original.owner === source)
+        #expect(source.entries.first === original && source.closeRequests == 0)
+        return
+    }
     target.refuseHandoff = outcome != .transferred
     target.onSetProfile = { [weak target] in
         NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: target?.window())
