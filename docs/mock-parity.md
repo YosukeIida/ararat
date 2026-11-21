@@ -24,7 +24,7 @@ Run the checks below as `--ararat-screen=<name>` on the VM. Use the bundled app 
 
 Run the Keyboard main check with `--ararat-keyboard-main-scope` for the Find and Archive captures.
 
-Copy each PNG with its same-stem JSON file. View frames in the JSON use window coordinates in points. A region capture's sidecar describes the host window. The checker covers the sidebar, split segments, command bar and switcher, Little Window, Downloads and settings structures listed in [structure.json](../macos/scripts/mock-values/structure.json). Inspect native menus and rendered web DOM in the PNGs.
+Copy each PNG with its same-stem JSON file. Both are written into `$TMPDIR` beside each other; `images` in the check's own result names only the PNG, so copy the `ararat-prompts-*.json` files as well. Without them the checker reports `missing capture` for that rule, because the frames live only in the JSON. View frames in the JSON use window coordinates in points. A region capture's sidecar describes the host window. The checker covers the sidebar, split segments, command bar and switcher, Little Window, Downloads and settings structures listed in [structure.json](../macos/scripts/mock-values/structure.json). Inspect native menus and rendered web DOM in the PNGs.
 
 ```sh
 uv run --no-project python macos/scripts/mock-values/check_structure.py /path/to/copied/sidecars/*.json

@@ -25,7 +25,7 @@ VM では次のチェックを `--ararat-screen=<name>` で実行する。[画�
 
 ページ内検索と Archive の撮影には、keyboard のメインチェックを `--ararat-keyboard-main-scope` 付きで実行する。
 
-PNG と、拡張子以外のファイル名が同じ JSON を一緒に取得する。JSON の座標はウィンドウ座標系で、単位は pt である。領域撮影の JSON には親ウィンドウのビュー階層が入る。サイドバー、分割セグメント、コマンドバー、タブ切り替え、Little Window、Downloads、設定の検査項目は [structure.json](../macos/scripts/mock-values/structure.json) に示す。AppKit のメニューとページ内の DOM の外観は PNG で確認する。
+PNG と、拡張子以外のファイル名が同じ JSON を一緒に取得する。どちらも `$TMPDIR` に並べて書き出されるが、チェック結果の `images` には PNG のパスしか出ないので、同じ場所の `ararat-prompts-*.json` も一緒に持ってくる。JSON がないと、その検査項目は `missing capture` になり、座標は JSON にしかないので判定できない。JSON の座標はウィンドウ座標系で、単位は pt である。領域撮影の JSON には親ウィンドウのビュー階層が入る。サイドバー、分割セグメント、コマンドバー、タブ切り替え、Little Window、Downloads、設定の検査項目は [structure.json](../macos/scripts/mock-values/structure.json) に示す。AppKit のメニューとページ内の DOM の外観は PNG で確認する。
 
 ```sh
 uv run --no-project python macos/scripts/mock-values/check_structure.py /path/to/copied/sidecars/*.json
