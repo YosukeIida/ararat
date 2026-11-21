@@ -542,13 +542,15 @@ bool IsScratchPasswordProfile(const base::FilePath& path) {
       base::BindOnce(&ReadArcCopy, source, [self checkUsesArcFixtureKey]),
       base::BindOnce(^(ArcRead read) {
         ARPasswords* strongSelf = weakSelf;
+        const bool ready =
+            strongSelf && [strongSelf state] == ARPasswordsStateReady;
         ARArcPasswordImportCounts counts =
-            strongSelf ? [strongSelf addArcLogins:read.result]
-                       : ARArcPasswordImportCounts{};
+            ready ? [strongSelf addArcLogins:read.result]
+                  : ARArcPasswordImportCounts{};
         for (auto& login : read.result.logins)
           crypto::SecureZeroBuffer(base::as_writable_byte_span(login.password));
-        completion(strongSelf ? ArcStatus(read)
-                              : ARArcPasswordImportStatusStoreUnavailable,
+        completion(ready ? ArcStatus(read)
+                         : ARArcPasswordImportStatusStoreUnavailable,
                    counts);
       }));
 }
