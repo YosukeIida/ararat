@@ -65,7 +65,7 @@ fn rejected_edits_leave_the_whole_workspace_unchanged() {
 }
 
 #[test]
-fn deleting_archives_subtrees_preserves_parents_and_favorites_and_switches_every_window() {
+fn deleting_archives_all_three_lists_and_switches_every_window() {
     let mut ws = workspace();
     ws.items.get_mut("tab-b").unwrap().membership.parent = Some("today-work".into());
     ws.items.get_mut("tab-a").unwrap().lifecycle = Lifecycle::Unloaded;
@@ -75,14 +75,13 @@ fn deleting_archives_subtrees_preserves_parents_and_favorites_and_switches_every
     replay(&mut ws, |ws| ws.delete_space("space-work").unwrap());
     for window in ["one", "two", "other"] { assert_eq!(ws.shown_space(window), Some("space-home")); }
     for window in ["one", "two"] { assert_eq!(ws.selected(window), None); assert!(ws.windows[window].history.is_empty()); }
-    for id in ["folder-docs", "tab-spec", "split-1", "tab-a", "tab-b"] {
+    for id in ["folder-docs", "tab-spec", "split-1", "tab-a", "tab-b", "tab-mail"] {
         assert_eq!(ws.items[id].lifecycle, Lifecycle::Archived);
         assert_eq!(ws.items[id].membership, before.items[id].membership);
     }
-    assert_eq!(ws.items["tab-mail"], before.items["tab-mail"]);
-    assert_eq!(ws.favorites, before.favorites);
+    assert_eq!(ws.spaces[0].favorites, before.spaces[1].favorites);
     ws.check_tree().unwrap();
-    assert_eq!(ws.archive().len(), 3);
+    assert_eq!(ws.archive().len(), 4);
     replay(&mut ws, |ws| ws.restore_item("one", "tab-spec").unwrap());
     assert_eq!(ws.items["tab-spec"].membership.parent.as_deref(), Some("today-home"));
     let last = ws.clone(); assert!(ws.delete_space("space-home").is_err()); assert_eq!(ws, last);
@@ -119,8 +118,9 @@ fn deleting_preserves_closed_and_archived_lifecycles_and_their_original_times() 
 
 #[test]
 fn concurrent_item_puts_into_deleted_roots_repair_into_the_first_surviving_today() {
-    for root in ["pin-work", "today-work"] {
-        let base = workspace();
+    for root in ["pin-work", "today-work", "space-work:favorites"] {
+        let mut base = workspace();
+        base.items.get_mut("tab-mail").unwrap().membership.parent = Some("space-home:favorites".into());
         let mut deleting = base.clone(); let deletes = deleting.delete_space("space-work").unwrap();
         let mut moved = base.items["tab-mail"].clone();
         moved.membership.previous_parent = None; moved.membership.parent = Some(root.into());

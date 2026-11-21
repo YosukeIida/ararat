@@ -14,26 +14,22 @@ fn refused(ws: &mut Workspace, f: impl FnOnce(&mut Workspace) -> Result<Vec<Op>,
     let before = ws.clone(); assert!(f(ws).is_err()); assert_eq!(*ws, before);
 }
 #[test]
-fn creates_favorites_once_and_moves_tabs_back() {
+fn favorite_moves_between_spaces_without_copying_and_can_move_back_to_pinned() {
     let mut ws = workspace();
-    let profile = ws.spaces[0].profile.clone();
-    let old = ws.favorites.remove(&profile).unwrap();
-    ws.items.remove(&old);
-    for item in ws.items.values_mut().filter(|item| item.membership.parent.as_deref() == Some(&old)) {
-        item.membership.parent = Some("today-work".into());
-    }
-    let ops = edit(&mut ws, |ws| ws.ensure_favorites("space-work", "new-favorites").unwrap());
-    assert_eq!(ops.len(), 2);
-    assert!(ws.ensure_favorites("space-work", "another").unwrap().is_empty());
-    ws.move_item("tab-spec", "new-favorites", 0, false).unwrap();
-    ws.move_item("tab-spec", "pin-work", 0, false).unwrap();
-    assert_eq!(ws.items["tab-spec"].membership.parent.as_deref(), Some("pin-work"));
+    ws.close_item("tab-mail").unwrap();
+    edit(&mut ws, |ws| ws.move_item("tab-mail", "space-home:favorites", 0, false).unwrap());
+    assert!(children(&ws, "space-work:favorites").is_empty());
+    assert_eq!(children(&ws, "space-home:favorites"), ["tab-mail"]);
+    assert_eq!(ws.items["tab-mail"].lifecycle, Lifecycle::Unloaded);
+    edit(&mut ws, |ws| ws.move_item("tab-mail", "pin-home", 0, false).unwrap());
+    assert!(children(&ws, "space-home:favorites").is_empty());
+    assert_eq!(children(&ws, "pin-home")[0], "tab-mail");
 }
 #[test]
 fn moves_pin_unpin_favorite_cross_space_and_reorder_at_both_ends() {
     let mut ws = workspace(); ws.select_item_at("window", "tab-spec", 42).unwrap();
     let windows = ws.windows.clone(); let changed_at = ws.items["tab-spec"].lifecycle_changed_at;
-    for (parent, index) in [("today-work", 0), ("pin-work", 2), ("pin-work", 0), ("fav-default", 1), ("fav-default", 0), ("today-home", 0), ("pin-home", 0), ("folder-docs", 0)] {
+    for (parent, index) in [("today-work", 0), ("pin-work", 2), ("pin-work", 0), ("space-work:favorites", 1), ("space-work:favorites", 0), ("today-home", 0), ("pin-home", 0), ("folder-docs", 0)] {
         let old_parent = ws.items["tab-spec"].membership.parent.clone();
         let previous = ws.items["tab-spec"].membership.previous_parent.clone();
         edit(&mut ws, |ws| ws.move_item("tab-spec", parent, index, false).unwrap());
@@ -66,9 +62,9 @@ fn folders_move_with_subtrees_and_splits_move_as_one_even_from_a_member() {
 #[test]
 fn rejected_moves_and_folder_edits_are_atomic() {
     let mut ws = workspace(); ws.create_folder("inner", "Inner", "folder-docs", 1, &[]).unwrap();
-    for (id, parent, index) in [("folder-docs", "inner", 0), ("folder-docs", "folder-docs", 0), ("folder-docs", "today-work", 0), ("folder-docs", "fav-default", 0), ("split-1", "fav-default", 0), ("tab-mail", "tab-spec", 0), ("pin-work", "pin-home", 0), ("tab-mail", "missing", 0), ("missing", "pin-home", 0), ("tab-mail", "pin-home", 1), ("tab-mail", "split-1", 0)] { refused(&mut ws, |ws| ws.move_item(id, parent, index, false)); }
+    for (id, parent, index) in [("folder-docs", "inner", 0), ("folder-docs", "folder-docs", 0), ("folder-docs", "today-work", 0), ("folder-docs", "space-work:favorites", 0), ("split-1", "space-work:favorites", 0), ("tab-mail", "tab-spec", 0), ("pin-work", "pin-home", 0), ("tab-mail", "missing", 0), ("missing", "pin-home", 0), ("tab-mail", "pin-home", 1), ("tab-mail", "split-1", 0)] { refused(&mut ws, |ws| ws.move_item(id, parent, index, false)); }
     for lifecycle in [Lifecycle::Closed, Lifecycle::Archived] { ws.items.get_mut("tab-mail").unwrap().lifecycle = lifecycle; refused(&mut ws, |ws| ws.move_item("tab-mail", "pin-home", 0, false)); }
-    for parent in ["today-work", "fav-default", "missing", "tab-spec"] { refused(&mut ws, |ws| ws.create_folder("new", "New", parent, 0, &[])); }
+    for parent in ["today-work", "space-work:favorites", "missing", "tab-spec"] { refused(&mut ws, |ws| ws.create_folder("new", "New", parent, 0, &[])); }
     refused(&mut ws, |ws| ws.create_folder("folder-docs", "New", "pin-home", 0, &[])); refused(&mut ws, |ws| ws.create_folder("new", " \n", "pin-home", 0, &[]));
     refused(&mut ws, |ws| ws.rename_folder("folder-docs", " \n")); refused(&mut ws, |ws| ws.rename_folder("tab-a", "No"));
     refused(&mut ws, |ws| ws.rename_tab("folder-docs", "No")); refused(&mut ws, |ws| ws.delete_folder("tab-a")); refused(&mut ws, |ws| ws.set_folder_collapsed("tab-a", true));
@@ -126,7 +122,7 @@ fn refuses_wraps_across_spaces_favorites_and_overlapping_subtrees() {
 
 #[test]
 fn today_pinned_and_favorites_reorder_between_multiple_neighbors() {
-    for parent in ["today-work", "pin-home", "fav-default"] {
+    for parent in ["today-work", "pin-home", "space-work:favorites"] {
         let mut ws = workspace();
         ws.move_item("tab-mail", parent, 0, false).unwrap(); ws.move_item("tab-spec", parent, 1, false).unwrap();
         let mut extra = ws.items["tab-mail"].clone(); extra.id = "extra".into();

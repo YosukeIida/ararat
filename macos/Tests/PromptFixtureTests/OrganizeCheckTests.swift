@@ -24,6 +24,7 @@ func organizeDockCheckFindsWorkByIDAfterTheFixtureChangesSpaceOrder() throws {
     let work = try #require(initial.spaces.first { $0.id == "organize-work" })
     let other = try #require(initial.spaces.first { $0.id == "organize-other" })
     let dock = try #require(work.pinned.first { $0.url == "about:blank?organize-dock" })
+    _ = try store.moveSpace(windowId: runtime.windowID, spaceId: other.id, index: 0)
     let landed = try store.moveItem(windowId: runtime.windowID, id: dock.id, container: other.pinnedId, index: 0, openFolder: false)
     let index = try #require(landed.spaces.firstIndex { $0.id == work.id })
     #expect(index != 0)

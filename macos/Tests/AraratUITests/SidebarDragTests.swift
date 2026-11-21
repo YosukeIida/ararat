@@ -9,7 +9,7 @@ private func dragRow(_ id: String, _ parent: String, _ index: UInt32 = 0, kind: 
 }
 
 private func dragSpace(_ id: String = "s", profile: String = "default", pinned: [Row] = [], today: [Row] = [], favorites: [Row] = []) -> SpaceSnapshot {
-    SpaceSnapshot(pinnedCount: UInt32(pinned.filter { $0.parentId == "p\(id)" }.count), todayCount: UInt32(today.filter { $0.parentId == "t\(id)" }.count), profileKey: profile, pinnedId: "p\(id)", todayId: "t\(id)", favoritesId: "f\(profile)", archiveAfter: .hours12,
+    SpaceSnapshot(pinnedCount: UInt32(pinned.filter { $0.parentId == "p\(id)" }.count), todayCount: UInt32(today.filter { $0.parentId == "t\(id)" }.count), profileKey: profile, pinnedId: "p\(id)", todayId: "t\(id)", favoritesId: "f\(id)", archiveAfter: .hours12,
                   profileName: profile, profile: .named(profile), id: id, title: id, icon: nil, look: nil, favorites: favorites, pinned: pinned, today: today)
 }
 
@@ -17,7 +17,7 @@ private func dragFixture() -> SpaceSnapshot {
     dragSpace(pinned: [dragRow("pin", "ps"), dragRow("folder", "ps", 1, kind: .folder),
                       dragRow("nested", "folder", kind: .folder, collapsed: true, depth: 1),
                       dragRow("child", "folder", 1, depth: 1)], today: [dragRow("a", "ts"), dragRow("b", "ts", 1)],
-              favorites: [dragRow("fav0", "fdefault"), dragRow("fav1", "fdefault", 1)])
+              favorites: [dragRow("fav0", "fs"), dragRow("fav1", "fs", 1)])
 }
 
 private func pureGeometry(_ space: SpaceSnapshot = dragFixture()) -> SidebarDragGeometry {
@@ -30,10 +30,26 @@ private func pureGeometry(_ space: SpaceSnapshot = dragFixture()) -> SidebarDrag
 }
 
 @Test @MainActor
-func favoriteDropAcceptsAnAbsentContainer() {
-    let original = dragSpace(today: [dragRow("a", "ts")])
-    let space = SpaceSnapshot(pinnedCount: original.pinnedCount, todayCount: original.todayCount, profileKey: original.profileKey, pinnedId: original.pinnedId, todayId: original.todayId, favoritesId: nil, archiveAfter: original.archiveAfter, profileName: original.profileName, profile: original.profile, id: original.id, title: original.title, icon: original.icon, look: original.look, favorites: original.favorites, pinned: original.pinned, today: original.today)
-    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 100), geometry: pureGeometry(space), dragged: space.today[0]) == .favorites(container: nil, index: 0))
+func favoriteDropUsesTheEmptyGridRoot() {
+    let space = dragSpace(today: [dragRow("a", "ts")])
+    #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 100), geometry: pureGeometry(space), dragged: space.today[0]) == .favorites(container: "fs", index: 0))
+}
+
+@Test @MainActor
+func numberedSpaceMoveAppendsToTheTargetFavorites() {
+    let favorite = dragRow("moving", "fs")
+    let source = dragSpace(favorites: [favorite])
+    let target = dragSpace("other", favorites: [dragRow("existing", "fother")])
+    let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: source.id,
+        selectedId: favorite.id, spaces: [source, target]))
+    var moved = false
+    sidebar.onMove = { id, container, index, openFolder, completion in
+        moved = true
+        #expect(id == favorite.id && container == "fother" && index == 1 && !openFolder)
+        completion(nil)
+    }
+    sidebar.organize(command: "move_to_space_2")
+    #expect(moved)
 }
 
 @Test
@@ -48,7 +64,7 @@ func dropResolverCoversBoundariesFoldersFavoritesDockAndRefusals() throws {
     #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 385), geometry: g, dragged: a) == .insert(container: "ts", index: 0, lineY: 385, depth: 0))
     #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 426), geometry: g, dragged: a) == .insert(container: "ts", index: 1, lineY: 426, depth: 0))
     for (x, index) in [(8.0, 0), (90, 1), (231, 2)] {
-        #expect(resolveSidebarDrop(position: CGPoint(x: x, y: 100), geometry: g, dragged: a) == .favorites(container: "fdefault", index: index))
+        #expect(resolveSidebarDrop(position: CGPoint(x: x, y: 100), geometry: g, dragged: a) == .favorites(container: "fs", index: index))
     }
     #expect(resolveSidebarDrop(position: CGPoint(x: 50, y: 660), geometry: g, dragged: a) == .dock(space: "other", container: "tother", index: 0))
     let folder = try #require(g.space.pinned.first { $0.id == "folder" })
@@ -64,7 +80,9 @@ func dropResolverCoversBoundariesFoldersFavoritesDockAndRefusals() throws {
     let pin = try #require(g.space.pinned.first)
     #expect(resolveSidebarDrop(position: CGPoint(x: 50, y: 660), geometry: g, dragged: pin) == .dock(space: "other", container: "pother", index: 0))
     let favorite = try #require(g.space.favorites.first)
-    #expect(resolveSidebarDrop(position: CGPoint(x: 230, y: 100), geometry: g, dragged: favorite) == .favorites(container: "fdefault", index: 1))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 50, y: 660), geometry: g, dragged: favorite) == .dock(space: "other", container: "fother", index: 0))
+    #expect(resolveSidebarDrop(position: CGPoint(x: 84, y: 660), geometry: g, dragged: favorite) == .refused)
+    #expect(resolveSidebarDrop(position: CGPoint(x: 230, y: 100), geometry: g, dragged: favorite) == .favorites(container: "fs", index: 1))
     #expect(resolveSidebarDrop(position: CGPoint(x: 40, y: 330), geometry: g, dragged: a) == .insert(container: "folder", index: 2, lineY: 344, depth: 1))
     #expect(resolveSidebarDrop(position: CGPoint(x: 30, y: 261), geometry: g, dragged: a) == .insert(container: "folder", index: 0, lineY: 262, depth: 1))
     let empty = pureGeometry(dragSpace())
@@ -143,7 +161,7 @@ func organizeCheckDrivesSeedThroughCore() throws {
     #expect(try row("folder").parentId == "organize-inner")
     #expect(try sidebar.organizeCheckBegin(id: row("favorite").id, destination: "favorites"))
     #expect(sidebar.organizeCheckEnd())
-    #expect(try row("favorite").parentId == "organize-favorites")
+    #expect(try row("favorite").parentId == "organize-work:favorites")
     #expect(try sidebar.organizeCheckBegin(id: row("dock").id, destination: "dock"))
     #expect(sidebar.organizeCheckEnd())
     let result = store.snapshot(windowId: "organize")
@@ -198,16 +216,17 @@ func emptyFavoritesDoNotCoverPinnedDropTargets() throws {
 }
 
 @Test @MainActor
-func firstFavoriteDropCreatesContainerAndSettles() async throws {
+func firstFavoriteDropUsesExistingSpaceContainerAndSettles() async throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let session = WorkspaceSession()
     _ = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path, windowID: "first-favorite", card: NSView(), seedOrganize: true, session: session)
     let store = try #require(session.store)
-    let space = try #require(store.snapshot(windowId: "first-favorite").spaces.first { $0.id == "organize-first" })
+    let space = try #require(store.snapshot(windowId: "first-favorite").spaces.first { $0.id == "organize-other" })
     let id = try #require(space.today.first?.id)
     let initial = try store.showSpaceSelectingTab(windowId: "first-favorite", spaceId: space.id, itemId: id)
-    #expect(space.favoritesId == nil)
+    let root = try #require(space.favoritesId)
+    #expect(space.favorites.isEmpty)
     let sidebar = SidebarView(snapshot: initial)
     let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 240, height: 700), styleMask: [], backing: .buffered, defer: false)
     window.contentView = sidebar
@@ -222,13 +241,15 @@ func firstFavoriteDropCreatesContainerAndSettles() async throws {
     #expect(zone.height > 0 && zone.height <= 8.5)
     #expect(sidebar.organizeCheckBegin(id: id, destination: "favorites"))
     sidebar.stepDrag()
-    #expect(sidebar.dropTarget == .favorites(container: nil, index: 0))
+    #expect(sidebar.dropTarget == .favorites(container: root, index: 0))
     #expect(sidebar.organizeCheckEnd())
     try await waitUntil { sidebar.drag == nil && sidebar.dragCopyView == nil }
     let result = try session.queue.sync { try #require(session.store).snapshot(windowId: "first-favorite") }
     let updated = try #require(result.spaces.first { $0.id == space.id })
-    #expect(updated.favoritesId != nil && updated.favorites.first?.id == id)
-    #expect(updated.favoritesId != result.spaces.first { $0.id == "organize-work" }?.favoritesId)
+    #expect(updated.favoritesId == root && updated.favorites.map(\.id) == [id])
+    let work = try #require(result.spaces.first { $0.id == "organize-work" })
+    #expect(updated.profileKey == work.profileKey && updated.favoritesId != work.favoritesId)
+    #expect(work.favorites.count == 2 && work.favorites.allSatisfy { $0.id != id })
     #expect(dragDescendants(sidebar).compactMap { $0 as? FavoriteTile }.contains { $0.row.id == id })
 }
 
@@ -250,7 +271,7 @@ func inProcessDragsMapEveryTargetOnceAndKeepOtherRowsStill() throws {
         switch target {
         case 0: point = CGPoint(x: 30, y: geometry.rows[0].frame.minY); container = "ps"
         case 1: point = CGPoint(x: 30, y: geometry.rows[1].frame.midY); container = "folder"
-        case 2: point = CGPoint(x: 30, y: geometry.favorites.midY); container = "fdefault"
+        case 2: point = CGPoint(x: 30, y: geometry.favorites.midY); container = "fs"
         case 3: point = CGPoint(x: geometry.dock[1].frame.midX, y: geometry.dock[1].frame.midY); container = "tother"
         default: point = CGPoint(x: 30, y: geometry.rows.last!.frame.maxY); container = "ts"
         }
@@ -752,7 +773,7 @@ private func dropPinBeforeSelection(staleSelection: String? = nil) throws -> (Si
     return (sidebar, dropped)
 }
 
-@Test(arguments: ["move", "moveIfLive", "firstFavorite", "openFolder", "edit"]) @MainActor
+@Test(arguments: ["move", "moveIfLive", "openFolder", "edit"]) @MainActor
 func editRepliesKeepSelectionPublishedBeforeDelivery(route: String) async throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -809,7 +830,6 @@ func editRepliesKeepSelectionPublishedBeforeDelivery(route: String) async throws
     case "move":
         #expect(sidebar.organizeCheckBegin(id: id, destination: "organize-outer"))
         #expect(sidebar.organizeCheckEnd())
-    case "firstFavorite": actions.onFirstFavorite?(id, space.id, 0, receive)
     case "openFolder": actions.onOpenFolder?("organize-inner", receive)
     default: actions.onItemEdit?(.rename(id: id, title: "Renamed", folder: false), receive)
     }

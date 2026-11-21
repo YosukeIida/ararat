@@ -12,10 +12,25 @@ fn favorites_container_survives_reopen() {
     let path = fresh_db("new-favorites").display().to_string();
     let store = WorkspaceStore::open(path.clone()).unwrap();
     store.create_space("window".into(), "Work".into(), "work".into()).unwrap();
-    let snapshot = store.ensure_favorites("window".into(), "work".into(), "favorites".into()).unwrap();
-    assert_eq!(snapshot.spaces[0].favorites_id.as_deref(), Some("favorites"));
+    let snapshot = store.create_space("window".into(), "Other".into(), "other".into()).unwrap();
+    assert_eq!(snapshot.spaces[0].favorites_id.as_deref(), Some("work:favorites"));
+    assert_eq!(snapshot.spaces[1].favorites_id.as_deref(), Some("other:favorites"));
     drop(store);
-    assert_eq!(WorkspaceStore::open(path).unwrap().snapshot("window".into()).spaces[0].favorites_id.as_deref(), Some("favorites"));
+    assert_eq!(WorkspaceStore::open(path).unwrap().snapshot("window".into()).spaces[0].favorites_id.as_deref(), Some("work:favorites"));
+}
+
+#[test]
+fn reimport_does_not_duplicate_favorites_or_write_profile_ownership() {
+    let path = fresh_db("reimport-favorites");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    for _ in 0..2 {
+        let imported = store.import_arc_sidebar("window".into(), FIXTURE.into(), None, None, None, None).unwrap();
+        assert_eq!(imported.report.favourite_tabs, 1);
+        assert_eq!(imported.snapshot.spaces[0].favorites.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["tab-mail"]);
+        assert!(imported.snapshot.spaces[1].favorites.is_empty());
+    }
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE kind = 'favorites'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
 }
 
 fn fresh_db(name: &str) -> PathBuf {
@@ -523,7 +538,7 @@ fn creating_a_space_persists_the_snapshot_and_journals_one_complete_change() {
     assert!(created.spaces[2].today.is_empty() && created.spaces[2].pinned.is_empty());
     assert_eq!(created.shown_space_id.as_deref(), Some("created-space"));
     assert_eq!(created.selected_id, None);
-    assert_eq!(conn.query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap(), before + 3);
+    assert_eq!(conn.query_row("SELECT count(*) FROM journal", [], |row| row.get::<_, i64>(0)).unwrap(), before + 4);
     drop(store);
     assert_eq!(WorkspaceStore::open(path.display().to_string()).unwrap().snapshot("test".into()), created);
 }
@@ -690,10 +705,13 @@ fn rejected_space_edits_write_neither_records_nor_journal() {
 
 #[test]
 fn snapshot_repairs_live_items_in_deleted_space_roots_without_writing_the_view_back() {
-    for root in ["pin-work", "today-work"] {
+    for root in ["pin-work", "today-work", "space-work:favorites"] {
         let path = fresh_db(&format!("space-delete-concurrent-{root}"));
-        let mut ws = import::arc_sidebar(FIXTURE, None, None, None, None).unwrap().0; ws.delete_space("space-work").unwrap();
-        ws.items.get_mut("tab-mail").unwrap().membership.parent = Some(root.into());
+        let mut ws = import::arc_sidebar(FIXTURE, None, None, None, None).unwrap().0;
+        let mut moved = ws.items["tab-mail"].clone();
+        ws.delete_space("space-work").unwrap();
+        moved.membership.parent = Some(root.into());
+        ws.items.insert(moved.id.clone(), moved);
         let (store, _) = Store::open(&path).unwrap(); store.write(ws.to_ops()); store.flush().unwrap(); drop(store);
         let before = records(&path);
         let store = WorkspaceStore::open(path.display().to_string()).unwrap(); let view = store.snapshot("one".into());
@@ -1629,10 +1647,10 @@ fn live_delete_shown_space_returns_only_its_loaded_rows_and_the_neighbour_snapsh
     let batch = store.live_delete_space("one".into(), "space-work".into()).unwrap();
     let mut ids: Vec<_> = batch.targets.iter().map(|target| target.live_id.clone()).collect();
     ids.sort();
-    let mut expected = vec![a.id, pin.id]; expected.sort();
+    let mut expected = vec![a.id, pin.id, favorite.id]; expected.sort();
     assert_eq!(ids, expected);
     assert_eq!(batch.snapshot.shown_space_id.as_deref(), Some("space-home"));
-    assert_eq!(store.live_tab("tab-mail".into()), Some(favorite.id));
+    assert_eq!(store.live_tab("tab-mail".into()), None);
     assert_eq!(batch.snapshot, store.snapshot("one".into()));
     assert!(store.live_delete_space("one".into(), "space-home".into()).is_err());
     for target in batch.targets { assert!(store.live_settle_close(target.command.id)); }

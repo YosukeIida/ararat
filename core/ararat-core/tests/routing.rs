@@ -784,9 +784,9 @@ fn put_profiled_spaces(workspace: &mut Workspace) {
     ] {
         workspace.apply(&Op::Put(Record::Space(Space {
             id: id.into(), order: order.into(), title: id.into(), profile, icon: None, look: None,
-            pinned: format!("pin-{id}"), today: format!("today-{id}"),
+            pinned: format!("pin-{id}"), today: format!("today-{id}"), favorites: Some(format!("{id}:favorites")),
         })));
-        for root in [format!("pin-{id}"), format!("today-{id}")] {
+        for root in [format!("pin-{id}"), format!("today-{id}"), format!("{id}:favorites")] {
             workspace.apply(&Op::Put(Record::Item(Item {
                 id: root, membership: Membership { parent: None, order: "a".into(), hlc: Default::default(), previous_parent: None },
                 title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: 0, archive: None,

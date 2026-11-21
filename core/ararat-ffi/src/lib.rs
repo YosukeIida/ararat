@@ -458,8 +458,7 @@ impl WorkspaceStore {
             if !matches!(current.lifecycle, Lifecycle::Open | Lifecycle::Unloaded)
                 || matches!(current.kind, ItemKind::Tab { .. }) { return None; }
         }
-        if current.membership.parent.is_some() || !(current.id == space.today || current.id == space.pinned
-            || workspace.favorites.get(&space.profile) == Some(&current.id)) { return None; }
+        if current.membership.parent.is_some() || !space.owns_root(&current.id) { return None; }
         Some(RestorationCandidate { id: item.id.clone(), url: url.clone(), space: space.id.clone(), profile: space.profile.clone().into() })
     }
 
@@ -560,15 +559,6 @@ impl WorkspaceStore {
         self.admit(true)?;
         let mut workspace = self.workspace.lock().unwrap();
         let ops = workspace.delete_archive_item(&id)?;
-        self.store.write(ops);
-        self.store.flush()?;
-        Ok(snapshot(workspace.clone(), &window_id))
-    }
-
-    pub fn ensure_favorites(&self, window_id: String, space_id: String, container_id: String) -> Result<WorkspaceSnapshot, CoreError> {
-        self.admit(true)?;
-        let mut workspace = self.workspace.lock().unwrap();
-        let ops = workspace.ensure_favorites(&space_id, &container_id)?;
         self.store.write(ops);
         self.store.flush()?;
         Ok(snapshot(workspace.clone(), &window_id))
@@ -1958,7 +1948,7 @@ fn space(ws: &Workspace, s: &Space, current: Option<&str>) -> SpaceSnapshot {
         profile_key: format!("{:?}", s.profile),
         pinned_id: s.pinned.clone(),
         today_id: s.today.clone(),
-        favorites_id: ws.favorites.get(&s.profile).cloned(),
+        favorites_id: s.favorites.clone(),
         archive_after: ws.archive_after.get(&s.profile).copied().unwrap_or_default().into(),
         profile_name: match &s.profile { ararat_core::model::Profile::Default => "Default".into(), ararat_core::model::Profile::Named(name) => name.clone() },
         profile: s.profile.clone().into(),
@@ -1969,7 +1959,7 @@ fn space(ws: &Workspace, s: &Space, current: Option<&str>) -> SpaceSnapshot {
         pinned_collapsed: ws.is_section_collapsed(&s.id),
         // The pinned list is the one container a collapse record governs, and the one that
         // keeps the current row visible when it is collapsed; Today holds no folders.
-        favorites: ws.favorites.get(&s.profile).map_or_else(Vec::new, |container| rows(ws, container, None)),
+        favorites: s.favorites.as_ref().map_or_else(Vec::new, |container| rows(ws, container, None)),
         pinned: rows(ws, &s.pinned, current),
         today: rows(ws, &s.today, None),
     }
@@ -2261,13 +2251,9 @@ mod tests {
         assert!(store.restoration_candidate("one".into()).is_some());
         {
             let mut workspace = store.workspace.lock().unwrap();
-            let profile = workspace.spaces.iter().find(|s| s.id == "space-home").unwrap().profile.clone();
-            let today = workspace.spaces.iter().find(|s| s.id == "space-home").unwrap().today.clone();
-            let mut favorites = workspace.items[&today].clone();
-            favorites.id = "test-favorites".into();
-            workspace.items.insert(favorites.id.clone(), favorites);
-            workspace.favorites.insert(profile, "test-favorites".into());
-            workspace.items.get_mut(&id).unwrap().membership.parent = Some("test-favorites".into());
+            workspace.spaces[1].profile = workspace.spaces[0].profile.clone();
+            let favorites = workspace.spaces[1].favorites.clone().unwrap();
+            workspace.items.get_mut(&id).unwrap().membership.parent = Some(favorites);
         }
         assert!(store.restoration_candidate("one".into()).is_some());
         store.show_space("one".into(), "space-work".into()).unwrap();
@@ -2656,7 +2642,7 @@ mod tests {
         let space = &snapshot.spaces[0];
         assert_eq!(space.pinned_id, "pin-work");
         assert_eq!(space.today_id, "today-work");
-        assert_eq!(space.favorites_id.as_deref(), Some("fav-default"));
+        assert_eq!(space.favorites_id.as_deref(), Some("space-work:favorites"));
         assert_eq!(space.pinned_count, 2);
         assert_ne!(space.profile_key, snapshot.spaces[1].profile_key);
         let folder = space.pinned.iter().find(|r| r.id == "folder-docs").unwrap();

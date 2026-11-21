@@ -7,7 +7,6 @@ public final class SidebarActions {
     public var confirmFolderDeletion: ((Row, @escaping (Bool) -> Void) -> Void)?
     public var onSelect: ((Row) -> Void)?
     public var onMove: ((String, String, Int, Bool, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
-    public var onFirstFavorite: ((String, String, Int, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
     public var onOpenFolder: ((String, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
     public var onClose: ((String) -> Void)?
     public var onCloseSelected: (() -> Void)?
@@ -66,17 +65,6 @@ public final class SidebarActions {
                 }
             }
         }
-        onFirstFavorite = { id, space, index, completion in
-            guard isActive() else { completion(nil); return }
-            adapter.firstFavorite(id: id, space: space, index: index) { result in
-                switch result {
-                case .success(let snapshot): record(snapshot); completion(snapshot); show(snapshot)
-                case .failure(let error):
-                    FileHandle.standardError.write(Data("cannot favorite item: \(error)\n".utf8))
-                    completion(nil)
-                }
-            }
-        }
         onOpenFolder = { id, completion in
             guard isActive() else { completion(nil); return }
             adapter.openFolder(id: id) { result in
@@ -99,7 +87,6 @@ public final class SidebarActions {
         sidebar.confirmFolderDeletion = confirmFolderDeletion
         sidebar.onSelect = onSelect
         sidebar.onMove = onMove
-        sidebar.onFirstFavorite = onFirstFavorite
         sidebar.onOpenFolder = onOpenFolder
         sidebar.onClose = onClose
         sidebar.onCloseSelected = onCloseSelected

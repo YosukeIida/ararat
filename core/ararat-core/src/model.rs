@@ -24,6 +24,15 @@ pub struct Space {
     pub look: Option<Look>,
     pub pinned: Id,
     pub today: Id,
+    pub favorites: Option<Id>,
+}
+
+impl Space {
+    pub fn owns_root(&self, root: &str) -> bool {
+        self.today == root || self.pinned == root || self.favorites.as_deref() == Some(root)
+    }
+
+    pub(crate) fn favorites_id(id: &str) -> Id { format!("{id}:favorites") }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,7 +225,6 @@ pub struct Workspace {
     pub history_purges: HashMap<Id, (Profile, Id, u64)>,
     pub history_profiles: HashMap<Id, Profile>,
     pub spaces: Vec<Space>,
-    pub favorites: HashMap<Profile, Id>,
     pub items: HashMap<Id, Item>,
     // Where links from other apps go, synced with the workspace (architecture 8.4): one record
     // per rule (topic.8.3 merges per record), and the default destination when it differs from
@@ -230,7 +238,6 @@ pub enum Kind {
     KeyBinding,
     Space,
     Item,
-    Favorites,
     Window,
     LittleWindow,
     LittleWindowDevice,
@@ -252,7 +259,6 @@ impl Kind {
             Kind::KeyBinding => "key_binding",
             Kind::Space => "space",
             Kind::Item => "item",
-            Kind::Favorites => "favorites",
             Kind::Window => "window",
             Kind::LittleWindow => "little_window",
             Kind::LittleWindowDevice => "little_window_device",
@@ -270,7 +276,7 @@ impl Kind {
     }
 
     pub fn parse(s: &str) -> Option<Kind> {
-        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Favorites, Kind::Window, Kind::LittleWindow, Kind::LittleWindowDevice, Kind::DownloadDevice, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState, Kind::SectionState, Kind::Settings, Kind::RoutingRule, Kind::RoutingDefault, Kind::HistoryPurge, Kind::HistoryProfile].into_iter().find(|k| k.as_str() == s)
+        [Kind::KeyBinding, Kind::Space, Kind::Item, Kind::Window, Kind::LittleWindow, Kind::LittleWindowDevice, Kind::DownloadDevice, Kind::ArchiveAfter, Kind::LastSelected, Kind::FolderState, Kind::SectionState, Kind::Settings, Kind::RoutingRule, Kind::RoutingDefault, Kind::HistoryPurge, Kind::HistoryProfile].into_iter().find(|k| k.as_str() == s)
     }
 }
 
@@ -288,7 +294,6 @@ pub enum Record {
     LittleWindow(LittleWindowFrame),
     LittleWindowDevice(LittleWindowDevice),
     DownloadDevice(DownloadDevice),
-    Favorites { profile: Profile, container: Id },
     RoutingRule { order: String, rule: crate::routing::Rule },
     RoutingDefault { destination: crate::routing::Destination },
     HistoryPurge { id: Id, profile: Profile, item: Id, changed_at: u64 },
@@ -310,7 +315,6 @@ impl Record {
             Record::LittleWindowDevice(_) => Kind::LittleWindowDevice,
             Record::DownloadDevice(_) => Kind::DownloadDevice,
             Record::Item(_) => Kind::Item,
-            Record::Favorites { .. } => Kind::Favorites,
             Record::RoutingRule { .. } => Kind::RoutingRule,
             Record::RoutingDefault { .. } => Kind::RoutingDefault,
             Record::HistoryPurge { .. } => Kind::HistoryPurge,
@@ -332,7 +336,6 @@ impl Record {
             Record::LittleWindowDevice(_) => "workspace".into(),
             Record::DownloadDevice(_) => "workspace".into(),
             Record::Item(i) => i.id.clone(),
-            Record::Favorites { profile, .. } => profile_id(profile),
             Record::RoutingRule { rule, .. } => rule.id.clone(),
             Record::RoutingDefault { .. } => "workspace".into(),
             Record::HistoryPurge { id, .. } => id.clone(),
@@ -354,7 +357,6 @@ impl Record {
             Record::LittleWindowDevice(device) => serde_json::to_string(device),
             Record::DownloadDevice(device) => serde_json::to_string(device),
             Record::Item(i) => serde_json::to_string(i),
-            Record::Favorites { container, .. } => serde_json::to_string(container),
             Record::RoutingRule { order, rule } => serde_json::to_string(&crate::routing::StoredRuleBody {
                 order: order.clone(), conditions: rule.conditions.clone(), destination: rule.destination.clone(),
                 profile: rule.profile.clone() }),
@@ -379,10 +381,6 @@ impl Record {
             Kind::LittleWindowDevice => Record::LittleWindowDevice(serde_json::from_str(body)?),
             Kind::DownloadDevice => Record::DownloadDevice(serde_json::from_str(body)?),
             Kind::Item => Record::Item(serde_json::from_str(body)?),
-            Kind::Favorites => Record::Favorites {
-                profile: serde_json::from_str(id)?,
-                container: serde_json::from_str(body)?,
-            },
             Kind::RoutingRule => {
                 let stored: crate::routing::StoredRuleBody = serde_json::from_str(body)?;
                 Record::RoutingRule {
@@ -418,11 +416,10 @@ impl Workspace {
     pub fn is_private(&self) -> bool { self.off_the_record }
 
     pub fn private(profile: Profile) -> Self {
-        let mut workspace = Self::default();
+        let mut workspace = Self { off_the_record: true, ..Self::default() };
         workspace.create_space("", "Private", "private").expect("private space");
         workspace.windows.clear();
         workspace.spaces[0].profile = profile;
-        workspace.off_the_record = true;
         workspace
     }
 
@@ -554,14 +551,10 @@ impl Workspace {
             Op::Put(Record::Item(item)) => {
                 self.items.insert(item.id.clone(), item.clone());
             }
-            Op::Put(Record::Favorites { profile, container }) => {
-                self.favorites.insert(profile.clone(), container.clone());
-            }
             Op::Delete(Kind::Space, id) => self.spaces.retain(|s| &s.id != id),
             Op::Delete(Kind::Item, id) => {
                 self.items.remove(id);
             }
-            Op::Delete(Kind::Favorites, id) => self.favorites.retain(|p, _| &profile_id(p) != id),
             Op::Put(Record::RoutingRule { order, rule }) => {
                 self.routing_rules.insert(rule.id.clone(), crate::routing::StoredRule { order: order.clone(), rule: rule.clone() });
             },
@@ -579,10 +572,6 @@ impl Workspace {
 
     pub fn to_ops(&self) -> Vec<Op> {
         let spaces = self.spaces.iter().map(|s| Record::Space(s.clone()));
-        let favorites = self
-            .favorites
-            .iter()
-            .map(|(p, c)| Record::Favorites { profile: p.clone(), container: c.clone() });
         let items = self.items.values().map(|i| Record::Item(i.clone()));
         let rules = self.routing_rules.values().map(|s| Record::RoutingRule { order: s.order.clone(), rule: s.rule.clone() });
         // The built-in default is derived, never stored: records carry a change from it only
@@ -591,7 +580,7 @@ impl Workspace {
             .then(|| Record::RoutingDefault { destination: self.routing_default.clone() });
         let purges = self.history_purges.iter().map(|(id, (profile, item, changed_at))| Record::HistoryPurge { id: id.clone(), profile: profile.clone(), item: item.clone(), changed_at: *changed_at });
         let history_profiles = self.history_profiles.iter().map(|(item, profile)| Record::HistoryProfile { item: item.clone(), profile: profile.clone() });
-        spaces.chain(favorites).chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.section_collapsed.iter().map(|(space, collapsed)| Record::SectionState { space: space.clone(), collapsed: *collapsed })).chain((self.settings != Settings::default()).then(|| Record::Settings(self.settings.clone()))).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(self.little_window_frame.map(Record::LittleWindow)).chain((self.little_window_device != LittleWindowDevice::default()).then(|| Record::LittleWindowDevice(self.little_window_device.clone()))).chain((self.download_device != DownloadDevice::default()).then(|| Record::DownloadDevice(self.download_device.clone()))).chain(rules).chain(default.into_iter()).chain(purges).chain(history_profiles)
+        spaces.chain(items).chain(self.key_binding_overrides.iter().map(|(command, key)| Record::KeyBinding { command: command.clone(), key: key.clone() })).chain(self.folder_collapsed.iter().map(|(item, collapsed)| Record::FolderState { item: item.clone(), collapsed: *collapsed })).chain(self.section_collapsed.iter().map(|(space, collapsed)| Record::SectionState { space: space.clone(), collapsed: *collapsed })).chain((self.settings != Settings::default()).then(|| Record::Settings(self.settings.clone()))).chain(self.archive_after.iter().map(|(p, v)| Record::ArchiveAfter { profile: p.clone(), value: *v })).chain(self.last_selected.iter().map(|(item, at)| Record::LastSelected { item: item.clone(), at: *at })).chain(self.windows.values().cloned().map(Record::Window)).chain(self.little_window_frame.map(Record::LittleWindow)).chain((self.little_window_device != LittleWindowDevice::default()).then(|| Record::LittleWindowDevice(self.little_window_device.clone()))).chain((self.download_device != DownloadDevice::default()).then(|| Record::DownloadDevice(self.download_device.clone()))).chain(rules).chain(default.into_iter()).chain(purges).chain(history_profiles)
             .map(Op::Put).collect()
     }
 
@@ -625,11 +614,9 @@ impl Workspace {
         }
     }
 
-    // Favorites are excluded: they belong to a profile, so no space of their own; the chain
-    // has no cycle the tree checks do not surface.
-    fn space_of(&self, id: &str) -> Option<&Space> {
+    pub(crate) fn space_of(&self, id: &str) -> Option<&Space> {
         let (root, _) = self.list_for(id)?;
-        self.spaces.iter().find(|space| &space.pinned == root || &space.today == root)
+        self.spaces.iter().find(|space| space.owns_root(root))
     }
 
     // The pane's "Deleted space" menus read the core's one answer, not a Swift-side compare.
@@ -652,6 +639,13 @@ impl Workspace {
 }
 
 impl Item {
+    pub(crate) fn container(id: Id, changed_at: u64) -> Self {
+        Self {
+            id, membership: Membership { parent: None, order: crate::order::key_between(None, None), hlc: Hlc::default(), previous_parent: None },
+            title: None, kind: ItemKind::Container, lifecycle: Lifecycle::Open, lifecycle_changed_at: changed_at, archive: None,
+        }
+    }
+
     pub fn display_title(&self) -> &str {
         if let Some(title) = &self.title {
             return title;

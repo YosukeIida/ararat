@@ -159,10 +159,8 @@ impl Index {
         let mut entries = Vec::new();
         let current = ws.selected(window);
         let shown_space = ws.shown_space(window);
-        let current_profile = current.and_then(|id| ws.item_profile(id));
-        let current_root = current.and_then(|id| ws.list_for(id)).map(|(root, _)| root);
-        let current_space = ws.spaces.iter().find(|space| current_root.is_some_and(|root| root == space.pinned || root == space.today))
-            .or_else(|| ws.spaces.iter().find(|space| Some(space.id.as_str()) == shown_space && current_profile == Some(&space.profile)));
+        let current_space = current.and_then(|id| ws.space_of(id));
+        let current_profile = current_space.map(|space| &space.profile);
         let current_folder = current.and_then(|id| ws.items.get(id)).and_then(|item| item.membership.parent.clone())
             .filter(|parent| ws.items.get(parent).is_some_and(|i| matches!(i.kind, ItemKind::Folder)));
         // Space moves skip the tab's own space; folder moves keep it (moving into a pinned folder
@@ -196,16 +194,15 @@ impl Index {
                 }
             }
         }
-        let mut favorites: Vec<_> = ws.favorites.values().collect();
-        favorites.sort();
-        for root in favorites {
+        for space in &ws.spaces {
+            let Some(root) = space.favorites.as_deref() else { continue };
             let mut stack = ws.children(root).into_iter().rev().collect::<Vec<_>>();
             while let Some(item) = stack.pop() {
                 if !matches!(item.lifecycle, Lifecycle::Open | Lifecycle::Unloaded) { continue; }
                 stack.extend(ws.children(&item.id).into_iter().rev());
                 if let ItemKind::Tab { url, .. } = &item.kind {
                     if !excluded(item) && seen.insert(item.id.clone()) {
-                        entries.push(Entry { suggestion: Suggestion { title: item.display_title().into(), subtitle: "Favorite".into(), url: Some(url.clone()), key: None, target: Target::Tab { id: item.id.clone(), space_id: None }, score: 0.0 }, custom_title: item.title.is_some(), selected: ws.last_selected.get(&item.id).copied() });
+                        entries.push(Entry { suggestion: Suggestion { title: item.display_title().into(), subtitle: "Favorite".into(), url: Some(url.clone()), key: None, target: Target::Tab { id: item.id.clone(), space_id: Some(space.id.clone()) }, score: 0.0 }, custom_title: item.title.is_some(), selected: ws.last_selected.get(&item.id).copied() });
                     }
                 }
             }
@@ -429,7 +426,7 @@ pub const SWITCHER_LIMIT: usize = 5;
 
 /// The empty query's list and the ⌃Tab switcher's list (D4): the shown space's most recently
 /// selected tabs, newest first, with the selected tab and the shown split's members left out.
-/// Unloaded tabs take part; favourites belong to the profile and do not.
+/// Unloaded tabs take part; the list is limited to pinned and Today.
 pub fn recent_tabs(ws: &Workspace, window: &str, limit: usize) -> Vec<Suggestion> {
     ws.shown_space(window)
         .and_then(|id| ws.spaces.iter().find(|space| space.id == id))
@@ -467,11 +464,7 @@ fn recent_tabs_in_space(
 
 pub fn switcher_thumbnail_items(ws: &Workspace, window: &str, space: &crate::model::Space) -> Vec<Id> {
     let current = ws.selected(window).filter(|id| {
-        ws.list_for(id).is_some_and(|(root, _)| {
-            root == space.pinned || root == space.today
-                || (ws.shown_space(window) == Some(space.id.as_str())
-                    && ws.favorites.get(&space.profile).is_some_and(|id| id == root))
-        })
+        ws.is_in_space(id, &space.id)
     });
     let limit = SWITCHER_LIMIT + usize::from(current.is_none());
     let mut items: Vec<_> = recent_tabs_in_space(ws, space, current, limit)

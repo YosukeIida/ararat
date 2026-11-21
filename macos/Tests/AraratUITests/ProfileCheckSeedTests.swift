@@ -23,4 +23,6 @@ import Testing
     #expect(snapshot.spaces.last?.profileKey != snapshot.spaces[0].profileKey)
     #expect(snapshot.spaces[1].id == "dock-0")
     #expect(snapshot.spaces[1].today.contains { $0.url == "about:blank?dock-drag" })
+    #expect(snapshot.spaces[0].favorites.map(\.url) == ["about:blank?dock-favorite-default"])
+    #expect(snapshot.spaces[1].favorites.map(\.url) == ["about:blank?dock-favorite-dock-0"])
 }

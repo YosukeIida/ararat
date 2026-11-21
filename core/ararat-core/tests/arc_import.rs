@@ -28,7 +28,43 @@ fn imports_spaces_with_their_containers_and_profiles() {
     assert_eq!(ws.spaces[0].today, "today-work");
     assert_eq!(ws.spaces[0].icon.as_deref(), Some("💼"));
     assert_eq!(ws.spaces[1].profile, Profile::Named("Profile 1".into()));
-    assert_eq!(ws.favorites[&Profile::Default], "fav-default");
+    assert_eq!(ws.spaces[0].favorites.as_deref(), Some("space-work:favorites"));
+    assert_eq!(ws.spaces[1].favorites.as_deref(), Some("space-home:favorites"));
+    assert_eq!(ws.children("space-work:favorites")[0].id, "tab-mail");
+    assert!(ws.children("space-home:favorites").is_empty());
+    assert!(!ws.items.contains_key("fav-default"));
+}
+
+#[test]
+fn arc_favorite_goes_to_the_first_space_of_its_profile_in_file_order() {
+    let json = fixture_with(|c| {
+        let spaces = c["spaces"].as_array_mut().unwrap();
+        spaces[3]["profile"] = spaces[1]["profile"].clone();
+        spaces.rotate_left(2);
+        let items = c["items"].as_array_mut().unwrap();
+        let favorite = items.iter().position(|value| value == "tab-mail").unwrap();
+        let source = items.iter().position(|value| value == "fav-default").unwrap();
+        let mut second = items[favorite + 1].clone();
+        second["id"] = "a-second-favorite".into();
+        items[source + 1]["childrenIds"] = serde_json::json!(["tab-mail", "a-second-favorite"]);
+        items.extend(["a-second-favorite".into(), second]);
+    });
+    let (workspace, report) = arc_sidebar(&json, None, None, None, None).unwrap();
+    assert_eq!(workspace.spaces[0].id, "space-home");
+    let favorites: Vec<_> = workspace.children("space-home:favorites").into_iter().map(|item| item.id.as_str()).collect();
+    assert_eq!(favorites, ["tab-mail", "a-second-favorite"]);
+    assert!(workspace.children("space-work:favorites").is_empty());
+    assert_eq!(report.favourite_tabs, 2);
+}
+
+#[test]
+fn a_populated_arc_favorites_root_without_a_space_in_its_profile_is_rejected() {
+    let json = fixture_with(|c| {
+        let spaces = c["spaces"].as_array_mut().unwrap();
+        spaces[1]["profile"] = spaces[3]["profile"].clone();
+    });
+    let error = arc_sidebar(&json, None, None, None, None).unwrap_err();
+    assert!(error.0.contains("has no space in its profile"));
 }
 
 #[test]

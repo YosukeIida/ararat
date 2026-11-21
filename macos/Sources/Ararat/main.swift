@@ -3127,7 +3127,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
         guard let item = capturedItem, self.snapshot.selectedId == item, let target, adapter.isCurrentNavigationTarget(target),
               let space = self.snapshot.spaces.first(where: { $0.id == id }) else { return }
         guard let live = target["live"] as? String else { return }
-        workspace.moveIfLive(id: item, container: space.todayId, index: Int(space.todayCount), openFolder: false, expectedLive: live) { [weak self] result in
+        let isFavorite = self.snapshot.spaces.contains { $0.favorites.contains { $0.id == item } }
+        guard let container = isFavorite ? space.favoritesId : space.todayId else { return }
+        let index = isFavorite ? space.favorites.count : Int(space.todayCount)
+        workspace.moveIfLive(id: item, container: container, index: index, openFolder: false, expectedLive: live) { [weak self] result in
           switch result { case .success(let snapshot): if let snapshot { self?.show(snapshot) }; case .failure(let error): self?.report(error) }
         }
       case .moveToFolder(let id, let spaceID):
@@ -9035,7 +9038,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   }
 
   func organizeConditionNames(screen: Bool) -> [String] {
-    ["seed", "today_to_pinned", "pin_hint", "folder_open_nested_insert", "pinned_to_favorites", "dock_no_switch", "folder_drag_refused", "escape_cancel", "first_favorite_drop", "folder_hover_opens", "hover_drop"] + (screen ? ["drop_line_image", "favorite_images", "favorite_status_image"] : [])
+    ["seed", "today_to_pinned", "pin_hint", "folder_open_nested_insert", "pinned_to_favorites", "dock_no_switch", "folder_drag_refused", "escape_cancel", "first_favorite_drop", "separate_favorites", "folder_hover_opens", "hover_drop"] + (screen ? ["drop_line_image", "favorite_images", "favorite_status_image"] : [])
   }
 
   func organizeCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
@@ -9144,35 +9147,36 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 8:
       guard sidebar.organizeCheckIdle else { return }
       organizeConditions["escape_cancel"] = organizeCancelStarted && row("cancel")?.parentId == space.pinnedId
-      // Why not Other: it shares Work's profile and therefore its existing favourites container.
-      if current.shownSpaceId != "organize-first" {
-        switchWorkspaceSpace("organize-first")
+      if current.shownSpaceId != other.id {
+        switchWorkspaceSpace(other.id)
         browserCheckPhase = 81
         return
       }
       browserCheckPhase = 81
     case 81:
-      guard current.shownSpaceId == "organize-first", sidebar.organizeCheckIdle,
-            let first = current.spaces.first(where: { $0.id == "organize-first" }) else { return }
-      if first.favorites.isEmpty { capture("empty-favorites") }
+      guard current.shownSpaceId == other.id, current.spaces.firstIndex(where: { $0.id == other.id }) == sidebar.spaceShown, sidebar.organizeCheckIdle,
+            other.favorites.isEmpty, let root = other.favoritesId else { return }
+      capture("empty-favorites")
       guard begin("first", "favorites") else { return }
       let point = sidebar.dragCheckPoint
       let drop = sidebar.resolveDropForCheck(position: point, draggedID: row("first")?.id ?? "")
-      // No container yet: the resolver answers `.favorites(nil, index)`, the first-favourite path.
-      // The result is kept aside; the condition is scored only after the drop lands (phase 82), so
-      // a stall here leaves it unset rather than true.
-      organizeFirstFavoriteTarget = drop?.kind == "favorites" && drop?.container == nil && first.favoritesId == nil
-      FileHandle.standardError.write(Data("ararat-trace: organize phase 81 first-favorite point=\(point) target=\(drop?.kind ?? "nil") container=\(drop?.container ?? "nil") before=\(first.favoritesId ?? "nil") actual=\(sidebar.dragStateForCheck.drop) dragging=\(sidebar.organizeCheckDragging) shown=\(sidebar.spaceShown)\n".utf8))
+      organizeFirstFavoriteTarget = drop?.kind == "favorites" && drop?.container == root
+      FileHandle.standardError.write(Data("ararat-trace: organize phase 81 first-favorite point=\(point) target=\(drop?.kind ?? "nil") container=\(drop?.container ?? "nil") before=\(other.favoritesId ?? "nil") actual=\(sidebar.dragStateForCheck.drop) dragging=\(sidebar.organizeCheckDragging) shown=\(sidebar.spaceShown)\n".utf8))
       guard sidebar.organizeCheckEnd() else { return }
       browserCheckPhase = 82
     case 82:
-      guard sidebar.organizeCheckIdle,
-            let first = current.spaces.first(where: { $0.id == "organize-first" }) else { return }
-      let landed = first.favorites.contains { $0.url == "about:blank?organize-first" }
-      organizeConditions["first_favorite_drop"] = organizeFirstFavoriteTarget && landed && first.favoritesId != nil
+      guard sidebar.organizeCheckIdle else { return }
+      let landed = other.favorites.count == 1 && other.favorites.first?.url == "about:blank?organize-first"
+      organizeConditions["first_favorite_drop"] = organizeFirstFavoriteTarget && landed
+      let workTiles = Set(space.favorites.map(\.id))
+      let otherTiles = Set(other.favorites.map(\.id))
+      organizeConditions["separate_favorites"] = space.profileKey == other.profileKey
+        && space.favoritesId != other.favoritesId && workTiles.count == 3 && landed
+        && workTiles.isDisjoint(with: otherTiles) && otherTiles.allSatisfy { sidebar.favoriteTileMarksForCheck(id: $0) != nil }
+        && workTiles.allSatisfy { sidebar.favoriteTileMarksForCheck(id: $0) == nil }
       if landed { capture("first-favorite") }
       if screen { organizeConditions["favorite_images"] = organizeImages["empty-favorites"] != nil && organizeImages["first-favorite"] != nil }
-      FileHandle.standardError.write(Data("ararat-trace: organize phase 82 first-favorite target=\(organizeFirstFavoriteTarget) landed=\(landed) container=\(first.favoritesId ?? "nil") parent=\(row("first")?.parentId ?? "nil")\n".utf8))
+      FileHandle.standardError.write(Data("ararat-trace: organize phase 82 first-favorite target=\(organizeFirstFavoriteTarget) landed=\(landed) container=\(other.favoritesId ?? "nil") parent=\(row("first")?.parentId ?? "nil")\n".utf8))
       switchWorkspaceSpace("organize-work")
       browserCheckPhase = 83
     case 83:

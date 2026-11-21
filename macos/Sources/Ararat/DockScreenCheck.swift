@@ -11,6 +11,7 @@ final class DockScreenCheck {
     var mid: [CGFloat]?
     var midTrace: [[String: Any]] = []
     var wheelTicks = 0
+    var favoritePages: [String: Set<String>] = [:]
     // Set while the fade image is being written: the screenshot spins the run loop, so a check tick
     // can run inside the capture before the image path exists.
     var capturing = false
@@ -29,7 +30,7 @@ final class DockScreenCheck {
     var details: [String: Any] = [:]
 
     static func conditionNames(screen: Bool) -> [String] {
-        ["seed", "cells", "wheel_input", "wheel_start", "wheel_settled", "library_open", "library_closed", "menu", "new_folder", "refused", "escape", "drop_refused", "drop_duration", "tint_initial", "tint_inactive", "tint_active", "minimum_docked", "minimum_hidden", "delete_space_sheet", "delete_space_count", "delete_space_shown", "delete_space_profile", "space_settings_page"] + (screen ? ["wheel_mid", "capture_cells", "capture_mid", "capture_refused", "capture_delete_space", "capture_space_settings"] : ["follow_mid"])
+        ["seed", "cells", "wheel_input", "wheel_start", "wheel_settled", "favorites_before", "favorites_mid", "favorites_after", "library_open", "library_closed", "menu", "new_folder", "refused", "escape", "drop_refused", "drop_duration", "tint_initial", "tint_inactive", "tint_active", "minimum_docked", "minimum_hidden", "delete_space_sheet", "delete_space_count", "delete_space_shown", "delete_space_profile", "space_settings_page"] + (screen ? ["wheel_mid", "capture_cells", "capture_mid", "capture_refused", "capture_delete_space", "capture_space_settings"] : ["follow_mid"])
     }
     static func conditionResults(_ conditions: [String: Bool], screen: Bool) -> (values: [String: Bool], failed: [String]) {
         let names = conditionNames(screen: screen)
@@ -149,6 +150,8 @@ extension Runtime {
                         var captured = false
                         var postFlush: [CGFloat]?
                         if DockScreenCheck.midCrossFade(values) {
+                            let pages = sidebar.dockCheckFavoritePages
+                            check.report("favorites_mid", check.favoritePages.count == 2 && check.favoritePages.allSatisfy { pages[$0.key] == $0.value })
                             // Draw the accepted sample before imaging it: the pump only marks the
                             // cells for display and screencapture blocks the main thread, so without
                             // this the image is the previous pass.
@@ -196,6 +199,13 @@ extension Runtime {
             let states = dock.cellStates
             guard states.count == 13, dock.subviews.count == 13 else { return }
             let sameProfile = current.spaces.filter { $0.profileKey == current.spaces[0].profileKey }
+            for space in current.spaces.prefix(2) {
+                check.favoritePages[space.id] = Set(space.favorites.filter { $0.url == "about:blank?dock-favorite-\(space.id)" }.map(\.id))
+            }
+            let firstTiles = check.favoritePages["default"] ?? []
+            let nextTiles = check.favoritePages["dock-0"] ?? []
+            check.report("favorites_before", firstTiles.count == 1 && nextTiles.count == 1 && firstTiles.isDisjoint(with: nextTiles)
+                         && sidebar.dockCheckFavoritePages["default"] == firstTiles)
             let widths = dock.subviews.map { $0.frame.width }
             let total = widths.reduce(0, +)
             check.report("seed", sameProfile.count == 12 && current.spaces.last?.id == "named")
@@ -213,6 +223,8 @@ extension Runtime {
                 let values = dock.cellStates.map(\.openFraction)
                 check.mid = values
                 check.report("follow_mid", DockScreenCheck.midBand(values))
+                let pages = sidebar.dockCheckFavoritePages
+                check.report("favorites_mid", check.favoritePages.count == 2 && check.favoritePages.allSatisfy { pages[$0.key] == $0.value })
                 sidebar.scrollWheel(with: cancelEvent)
                 browserCheckPhase = 10
                 return
@@ -248,6 +260,8 @@ extension Runtime {
             }
             let landed = dock.cellStates[0].openFraction < 0.001
             check.report("wheel_settled", landed)
+            let favoritePages = sidebar.dockCheckFavoritePages
+            check.report("favorites_after", favoritePages["dock-0"] == check.favoritePages["dock-0"])
             guard landed else { finishBrowserCheck(ok: false, values: dockCheckDiagnostics(screen: screen)); return }
             sidebar.setLibraryOpen(true)
             end("library_open", sidebar.libraryOpen && sidebar.libraryOpenFraction == 1)

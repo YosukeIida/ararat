@@ -1832,8 +1832,7 @@ fn live_auto_archive_keeps_thresholds_and_protected_rows_and_closes_only_loaded_
     for option in [ArchiveAfter::Hours12, ArchiveAfter::Hours24, ArchiveAfter::Days7, ArchiveAfter::Days30] {
         let mut ws = workspace();
         let mut live = Live::new();
-        ws.ensure_favorites("space-work", "favorites").unwrap();
-        tab(&mut ws, "favorite", "favorites", "https://favorite.test/");
+        tab(&mut ws, "favorite", "space-work:favorites", "https://favorite.test/");
         tab(&mut ws, "unloaded", "space-work:today", "https://unloaded.test/");
         ws.items.get_mut("unloaded").unwrap().lifecycle = Lifecycle::Unloaded;
         for item in ["a", "b", "c", "pinned", "favorite"] {
@@ -1862,24 +1861,26 @@ fn live_auto_archive_keeps_thresholds_and_protected_rows_and_closes_only_loaded_
 }
 
 #[test]
-fn live_delete_space_closes_its_loaded_rows_and_preserves_profile_favorites_and_last_space() {
+fn live_delete_space_closes_its_loaded_rows_and_preserves_sibling_favorites() {
     let mut ws = workspace();
     ws.create_space("two", "Home", "space-home").unwrap();
     ws.show_space("one", "space-work").unwrap();
-    ws.ensure_favorites("space-work", "favorites").unwrap();
-    tab(&mut ws, "favorite", "favorites", "https://favorite.test/");
+    tab(&mut ws, "favorite", "space-work:favorites", "https://favorite.test/");
     let mut live = Live::new();
-    for item in ["a", "pinned", "favorite"] {
+    tab(&mut ws, "sibling-favorite", "space-home:favorites", "https://sibling.test/");
+    for item in ["a", "pinned", "favorite", "sibling-favorite"] {
         let (_, command) = live.open(&mut ws, item, "https://example.test/").unwrap();
         live.command_sent(&command);
     }
     let (_, targets) = live.delete_space(&mut ws, "space-work").unwrap();
     let mut items: Vec<_> = targets.iter().map(|(_, command)| command.item.as_str()).collect();
     items.sort();
-    assert_eq!(items, ["a", "pinned"]);
+    assert_eq!(items, ["a", "favorite", "pinned"]);
     assert_eq!(ws.shown_space("one"), Some("space-home"));
-    assert!(live.live_tab("favorite").is_some());
-    assert_eq!(ws.items["favorite"].lifecycle, Lifecycle::Open);
+    assert!(live.live_tab("favorite").is_none());
+    assert_eq!(ws.items["favorite"].lifecycle, Lifecycle::Archived);
+    assert!(live.live_tab("sibling-favorite").is_some());
+    assert_eq!(ws.items["sibling-favorite"].lifecycle, Lifecycle::Open);
     for item in ["a", "b", "c", "pinned"] { assert_eq!(ws.items[item].lifecycle, Lifecycle::Archived); }
     let before = ws.clone();
     assert!(live.delete_space(&mut ws, "space-home").is_err());

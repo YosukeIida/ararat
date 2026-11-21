@@ -87,8 +87,7 @@ func addSplitViewMenuNeedsASelectedTodayOrPinnedTab() throws {
     sidebar.setLibraryOpen(false)
     #expect(runtime.validateMenuItem(item))
     try session.queue.sync {
-        _ = try store.ensureFavorites(windowId: windowID, spaceId: space.id, containerId: "favorites")
-        _ = try store.moveItem(windowId: windowID, id: pinned, container: "favorites", index: 0, openFolder: false)
+        _ = try store.moveItem(windowId: windowID, id: pinned, container: try #require(space.favoritesId), index: 0, openFolder: false)
         _ = try store.selectItem(windowId: windowID, id: pinned)
     }
     #expect(!runtime.validateMenuItem(item))

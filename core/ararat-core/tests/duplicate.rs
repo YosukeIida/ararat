@@ -16,7 +16,7 @@ fn duplicate(ws: &mut Workspace, id: &str, parent: &str, root: &str) -> String {
 }
 #[test]
 fn tabs_duplicate_in_each_list_at_start_middle_end_with_titles_and_fresh_age() {
-    for parent in ["today-work", "pin-work", "fav-default"] {
+    for parent in ["today-work", "pin-work", "space-work:favorites"] {
         for index in 0..3 {
             let mut ws = workspace();
             for n in 0..3 { let mut item = ws.items["tab-spec"].clone(); item.id = format!("sibling-{n}"); item.membership.parent = Some(parent.into()); item.membership.order = format!("a{n}"); ws.items.insert(item.id.clone(), item); }
@@ -107,7 +107,7 @@ fn duplicate_sorts_after_original_even_when_sibling_keys_tie() {
 fn unloaded_sources_stay_unloaded_and_inactive_ancestors_refuse() {
     let mut ws = workspace(); ws.items.get_mut("tab-mail").unwrap().lifecycle = Lifecycle::Unloaded;
     let original = ws.items["tab-mail"].clone();
-    duplicate(&mut ws, "tab-mail", "fav-default", "tab-mail");
+    duplicate(&mut ws, "tab-mail", "space-work:favorites", "tab-mail");
     assert_eq!(ws.items["tab-mail"], original);
     for state in [Lifecycle::Closed, Lifecycle::Archived] {
         let mut ws = workspace(); ws.items.get_mut("folder-docs").unwrap().lifecycle = state;
