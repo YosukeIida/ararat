@@ -1,17 +1,24 @@
 #import "ararat/core/ararat_passwords.h"
 
+#import <Security/Security.h>
+
 #include <cstdlib>
+#include <set>
 #include <map>
 #include <memory>
 #include <string>
 #include <utility>
 
+#include "ararat/core/ararat_arc_login_data.h"
 #include "base/command_line.h"
 #include "base/containers/span.h"
 #include "base/files/file_util.h"
+#include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/task/thread_pool.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/threading/thread_restrictions.h"
@@ -84,6 +91,62 @@ NSMapTable<NSString*, ARPasswords*>* Handles() {
   static NSMapTable<NSString*, ARPasswords*>* handles =
       [NSMapTable strongToWeakObjectsMapTable];
   return handles;
+}
+
+struct ArcRead {
+  bool no_key = false;
+  ararat::ArcLoginDataResult result;
+};
+
+std::string ArcSafeStorageSecret() {
+  NSDictionary* query = @{
+    (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+    (__bridge id)kSecAttrService : @"Arc Safe Storage",
+    (__bridge id)kSecReturnData : @YES,
+    (__bridge id)kSecMatchLimit : (__bridge id)kSecMatchLimitOne,
+  };
+  CFTypeRef found = nullptr;
+  if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &found) != errSecSuccess)
+    return {};
+  NSData* data = (__bridge_transfer NSData*)found;
+  return std::string(static_cast<const char*>(data.bytes), data.length);
+}
+
+ArcRead ReadArcCopy(const base::FilePath& source, bool fixture_key) {
+  ArcRead read;
+  base::ScopedTempDir dir;
+  if (!dir.CreateUniqueTempDir())
+    return read;
+  const auto copy = dir.GetPath().Append(source.BaseName());
+  if (!base::CopyFile(source, copy))
+    return read;
+  for (const char* side : {"-journal", "-wal"}) {
+    const base::FilePath from(source.value() + side);
+    if (base::PathExists(from))
+      base::CopyFile(from, base::FilePath(copy.value() + side));
+  }
+  std::string secret = fixture_key ? std::string("fixture-arc-secret")
+                                   : ArcSafeStorageSecret();
+  if (secret.empty()) {
+    read.no_key = true;
+    return read;
+  }
+  read.result = ararat::ReadArcLoginData(copy, secret);
+  crypto::SecureZeroBuffer(base::as_writable_byte_span(secret));
+  return read;
+}
+
+ARArcPasswordImportStatus ArcStatus(const ArcRead& read) {
+  if (read.no_key)
+    return ARArcPasswordImportStatusNoKey;
+  switch (read.result.status) {
+    case ararat::ArcLoginDataStatus::kOk:
+      return ARArcPasswordImportStatusImported;
+    case ararat::ArcLoginDataStatus::kUnsupportedVersion:
+      return ARArcPasswordImportStatusUnsupportedVersion;
+    case ararat::ArcLoginDataStatus::kUnreadable:
+      return ARArcPasswordImportStatusUnreadable;
+  }
 }
 
 bool IsScratchPasswordProfile(const base::FilePath& path) {
@@ -204,6 +267,14 @@ bool IsScratchPasswordProfile(const base::FilePath& path) {
          (command->GetSwitchValueASCII("ararat-check") == "passwords" ||
           command->GetSwitchValueASCII("ararat-screen") == "password-prompt" ||
           command->GetSwitchValueASCII("ararat-screen") == "settings-passwords") &&
+         command->HasSwitch("use-mock-keychain") &&
+         IsScratchPasswordProfile(profile_->GetPath());
+}
+
+- (BOOL)checkUsesArcFixtureKey {
+  const auto* command = base::CommandLine::ForCurrentProcess();
+  return profile_ &&
+         command->GetSwitchValueASCII("ararat-check") == "arc-password-import" &&
          command->HasSwitch("use-mock-keychain") &&
          IsScratchPasswordProfile(profile_->GetPath());
 }
@@ -450,6 +521,78 @@ bool IsScratchPasswordProfile(const base::FilePath& path) {
     return NO;
   [self removeRow:rowID];
   return YES;
+}
+
+- (void)importArcPasswordsFrom:(NSString*)loginData
+                    completion:(void (^)(ARArcPasswordImportStatus,
+                                         ARArcPasswordImportCounts))completion {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  const base::FilePath source(base::SysNSStringToUTF8(loginData));
+  if ([self state] != ARPasswordsStateReady || !source.IsAbsolute() ||
+      source.ReferencesParent()) {
+    completion(source.IsAbsolute() ? ARArcPasswordImportStatusStoreUnavailable
+                                   : ARArcPasswordImportStatusUnreadable,
+               ARArcPasswordImportCounts{});
+    return;
+  }
+  __weak ARPasswords* weakSelf = self;
+  base::ThreadPool::PostTaskAndReplyWithResult(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+      base::BindOnce(&ReadArcCopy, source, [self checkUsesArcFixtureKey]),
+      base::BindOnce(^(ArcRead read) {
+        ARPasswords* strongSelf = weakSelf;
+        ARArcPasswordImportCounts counts =
+            strongSelf ? [strongSelf addArcLogins:read.result]
+                       : ARArcPasswordImportCounts{};
+        for (auto& login : read.result.logins)
+          crypto::SecureZeroBuffer(base::as_writable_byte_span(login.password));
+        completion(strongSelf ? ArcStatus(read)
+                              : ARArcPasswordImportStatusStoreUnavailable,
+                   counts);
+      }));
+}
+
+- (ARArcPasswordImportCounts)addArcLogins:(const ararat::ArcLoginDataResult&)result {
+  ARArcPasswordImportCounts counts{};
+  counts.undecryptable = result.undecryptable;
+  if (result.status != ararat::ArcLoginDataStatus::kOk ||
+      [self state] != ARPasswordsStateReady)
+    return counts;
+  const auto saved = presenter_->GetSavedCredentials();
+  std::set<std::pair<std::string, std::u16string>> added;
+  for (const auto& login : result.logins) {
+    if (login.blocked) {
+      ++counts.neverSaved;
+      continue;
+    }
+    CredentialUIEntry entry;
+    password_manager::CredentialFacet facet;
+    facet.url = password_manager_util::StripAuthAndParams(GURL(login.origin_url));
+    facet.signon_realm = login.signon_realm;
+    entry.facets.push_back(std::move(facet));
+    entry.username = login.username;
+    entry.password = password_manager::PasswordString(base::UTF8ToUTF16(login.password));
+    entry.stored_in = {password_manager::PasswordForm::Store::kProfileStore};
+    const auto key = std::make_pair(login.signon_realm, login.username);
+    const auto match = std::find_if(saved.begin(), saved.end(), [&](const auto& c) {
+      return c.GetFirstSignonRealm() == key.first && c.username == key.second;
+    });
+    if (match != saved.end()) {
+      if (match->password.secure_value() == entry.password.secure_value())
+        ++counts.existing;
+      else
+        ++counts.conflicts;
+    } else if (added.contains(key)) {
+      ++counts.conflicts;
+    } else if (presenter_->AddCredential(
+                   entry, password_manager::PasswordForm::Type::kImported)) {
+      added.insert(key);
+      ++counts.added;
+    } else {
+      ++counts.invalid;
+    }
+  }
+  return counts;
 }
 
 @end

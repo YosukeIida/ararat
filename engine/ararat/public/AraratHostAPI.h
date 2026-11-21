@@ -11,6 +11,23 @@ typedef NS_ENUM(NSInteger, ARPasswordsState) {
   ARPasswordsStateFailed,
 };
 
+typedef NS_ENUM(NSInteger, ARArcPasswordImportStatus) {
+  ARArcPasswordImportStatusImported,
+  ARArcPasswordImportStatusNoKey,
+  ARArcPasswordImportStatusUnreadable,
+  ARArcPasswordImportStatusUnsupportedVersion,
+  ARArcPasswordImportStatusStoreUnavailable,
+};
+
+typedef struct {
+  NSUInteger added;
+  NSUInteger existing;
+  NSUInteger conflicts;
+  NSUInteger neverSaved;
+  NSUInteger undecryptable;
+  NSUInteger invalid;
+} ARArcPasswordImportCounts;
+
 @protocol ARPasswordRowAPI <NSObject>
 @property(nonatomic, readonly, copy) NSString* rowID;
 @property(nonatomic, readonly, copy) NSString* website;
@@ -40,6 +57,12 @@ NS_SWIFT_MAIN_ACTOR
 // The borrowed password buffer is cleared as soon as completion returns.
 - (void)revealRow:(NSString*)rowID
        completion:(void (NS_SWIFT_MAIN_ACTOR ^)(const unichar* _Nullable password, NSUInteger length))completion NS_SWIFT_DISABLE_ASYNC;
+// `loginData` is one Arc profile's "Login Data". It is copied before reading;
+// the key comes from the "Arc Safe Storage" Keychain item, so macOS asks the
+// user first. Passwords never cross this API; only counts do.
+- (void)importArcPasswordsFrom:(NSString*)loginData
+                    completion:(void (NS_SWIFT_MAIN_ACTOR ^)(ARArcPasswordImportStatus status,
+                                                             ARArcPasswordImportCounts counts))completion;
 - (void)invalidate;
 @end
 

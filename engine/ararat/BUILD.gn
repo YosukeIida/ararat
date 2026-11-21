@@ -82,7 +82,9 @@ test("arc_login_data_unittests") {
 source_set("passwords") {
   sources = [ "ararat_passwords.h", "ararat_passwords.mm" ]
   public = [ "ararat_passwords.h", "public/AraratHostAPI.h" ]
+  frameworks = [ "Security.framework" ]
   deps = [
+    ":arc_login_data",
     "//base",
     "//chrome/browser:browser_process",
     "//chrome/browser/affiliations",
