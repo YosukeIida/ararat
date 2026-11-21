@@ -1,3 +1,4 @@
 .direnv/
 # Local analysis artefacts of closed-source apps (large, and not ours to redistribute).
 /analysis/
+__pycache__/
