@@ -4,13 +4,19 @@ import os
 
 @MainActor
 final class PasswordPromptCheck {
-    private enum Scenario: String, CaseIterable {
+    enum Scenario: String, CaseIterable {
         case save, update, notNow, masterOff, offerOff, masterRevoked, offerRevoked
         case privateWindow, background, tabSwitch, crossHost, tabClose, never, neverAgain
         case implicitClose, suppressed, newerSubmission, littleWindow, confirmation
 
         var expectsNoPrompt: Bool {
             self == .masterOff || self == .offerOff || self == .privateWindow || self == .neverAgain
+        }
+
+        var usesBlocklistFixture: Bool { self == .never || self == .neverAgain }
+
+        func fixturePort(primary: UInt16, blocklist: UInt16?) -> UInt16? {
+            usesBlocklistFixture ? blocklist : primary
         }
     }
 
@@ -33,7 +39,9 @@ final class PasswordPromptCheck {
     }
 
     private static let captureTimeout: TimeInterval = 2
+    private static let caseTimeout: TimeInterval = 15
     private var captureDeadline: TimeInterval = 0
+    private var caseDeadline: TimeInterval?
     private var previousCaptureSample: CaptureSample?
 
     private var phase = Phase.unlock
@@ -41,6 +49,9 @@ final class PasswordPromptCheck {
     private var tab: (any ARTabAPI)?
     private var store: (any ARPasswordsAPI)?
     private var pending = false
+    private var finished = false
+    private var blocklistFixture: PromptFixtureServer?
+    private var blocklistPort: UInt16?
     private var settled = 0
     private var notNowBeforeNavigation = 0
     private var suppressionDismissals = 0
@@ -101,7 +112,20 @@ final class PasswordPromptCheck {
     }
 
     func tick(_ runtime: Runtime, host: any ARWindowHostAPI) {
-        guard let scenario = remaining.first, let port = runtime.promptFixturePort else { return }
+        guard !finished, let scenario = remaining.first else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let deadline = caseDeadline ?? now + Self.caseTimeout
+        caseDeadline = deadline
+        guard now < deadline else {
+            fail("timeout_\(phase.rawValue)", runtime: runtime)
+            return
+        }
+        guard !pending, let primary = runtime.promptFixturePort else { return }
+        if scenario.usesBlocklistFixture && blocklistFixture == nil {
+            startBlocklistFixture(runtime)
+            return
+        }
+        guard let port = scenario.fixturePort(primary: primary, blocklist: blocklistPort) else { return }
         let fixture = "http://127.0.0.1:\(port)/password-login?case=\(scenario.rawValue)" +
             (scenario == .newerSubmission && priorOffer != 0 ? "&variant=2" : "")
         let crossHostDestination = "http://localhost:\(port)/password-complete"
@@ -112,7 +136,6 @@ final class PasswordPromptCheck {
         let tabs = scenario == .privateWindow ? privateTabs :
             scenario == .littleWindow ? [little?.checkPasswordTab].compactMap { $0 } : regularTabs
         updateDetails(tab ?? tabs.first(where: { $0.url == fixture }) ?? tabs.first)
-        guard !pending else { return }
 
         switch phase {
         case .unlock:
@@ -121,18 +144,18 @@ final class PasswordPromptCheck {
             guard let store else { return }
             pending = true
             store.authenticate { [weak self, weak runtime] authorized in
-                guard let self, let runtime else { return }
+                guard let self, let runtime, !self.finished else { return }
                 self.pending = false
                 if authorized {
                     self.phase = .start
                 } else {
-                    runtime.finishBrowserCheck(ok: false, values: ["error": "scratch store authorization"])
+                    self.fail("scratch_store_authorization", runtime: runtime)
                 }
             }
         case .start:
             guard let store, regularTabs.first?.isLoading == false else { return }
             guard store.setManagerEnabled(scenario != .masterOff) else {
-                runtime.finishBrowserCheck(ok: false, values: ["error": "manager preference"])
+                fail("manager_preference", runtime: runtime)
                 return
             }
             store.offersToSave = scenario != .offerOff
@@ -156,7 +179,7 @@ final class PasswordPromptCheck {
             if scenario == .confirmation {
                 if !target.checkStartPasswordConfirmation({ [weak self] result in
                     MainActor.assumeIsolated {
-                        guard let self else { return }
+                        guard let self, !self.finished else { return }
                         self.pending = false
                         if result != "started" { self.confirmationUnavailable = "Credential Management API unavailable" }
                         self.phase = .wait
@@ -166,7 +189,7 @@ final class PasswordPromptCheck {
             }
             let started = target.checkFillPasswordFixture { [weak self, weak runtime] result in
                 MainActor.assumeIsolated {
-                    guard let self, let runtime else { return }
+                    guard let self, let runtime, !self.finished else { return }
                     self.pending = false
                     switch result {
                     case "filled", "missing_form", "missing_field", "missing_script", "edit_failed", "no_renderer_result":
@@ -204,7 +227,12 @@ final class PasswordPromptCheck {
                 guard dialog == nil, !tab.checkIsDialogActive() else {
                     record(false, runtime: runtime); return
                 }
-                if tab.passwordOffer.generation != 0 { phase = .reopen }
+                if tab.passwordOffer.generation != 0 {
+                    settled += 1
+                    if settled == 10 { phase = .reopen }
+                } else {
+                    settled = 0
+                }
                 return
             }
             if scenario.expectsNoPrompt {
@@ -236,9 +264,7 @@ final class PasswordPromptCheck {
                 if scenario == .save {
                     for action in ["clearPassword", "editPassword"] {
                         guard tab.checkPasswordPromptAction(action) else {
-                            failedAction = action
-                            updateDetails(tab)
-                            record(false, runtime: runtime)
+                            fail(action, runtime: runtime)
                             return
                         }
                     }
@@ -368,7 +394,7 @@ final class PasswordPromptCheck {
             guard let store else { return }
             pending = true
             store.snapshot { [weak self, weak runtime] state, rows in
-                guard let self, let runtime else { return }
+                guard let self, let runtime, !self.finished else { return }
                 self.pending = false
                 if state == .loading { return }
                 guard state == .ready else { self.record(false, runtime: runtime); return }
@@ -384,7 +410,7 @@ final class PasswordPromptCheck {
                     scenario == .update ? "fixture-updated-72" : "fixture-confirmed-39"
                 self.pending = true
                 store.revealRow(row.rowID) { [weak self, weak runtime] password, length in
-                    guard let self, let runtime else { return }
+                    guard let self, let runtime, !self.finished else { return }
                     self.pending = false
                     guard let password else { self.record(false, runtime: runtime); return }
                     let value = UnsafeBufferPointer(start: password, count: Int(length))
@@ -395,6 +421,29 @@ final class PasswordPromptCheck {
                     }
                 }
             }
+        }
+    }
+
+    private func startBlocklistFixture(_ runtime: Runtime) {
+        // Never persists for the whole origin, including submissions with a different username.
+        do {
+            let fixture = try PromptFixtureServer(tracePasswordPrompt: true)
+            blocklistFixture = fixture
+            pending = true
+            fixture.start { [weak self, weak runtime] result in
+                DispatchQueue.main.async {
+                    guard let self, let runtime, !self.finished else { return }
+                    self.pending = false
+                    switch result {
+                    case .success(let port):
+                        self.blocklistPort = port
+                    case .failure:
+                        self.fail("blocklist_fixture_start", runtime: runtime)
+                    }
+                }
+            }
+        } catch {
+            fail("blocklist_fixture_init", runtime: runtime)
         }
     }
 
@@ -410,13 +459,15 @@ final class PasswordPromptCheck {
     }
 
     private func record(_ passed: Bool, runtime: Runtime) {
-        guard let scenario = remaining.first else { return }
+        guard !finished, let scenario = remaining.first else { return }
         if scenario == .confirmation && !passed { confirmationUnavailable = nil }
         if scenario != .confirmation || confirmationUnavailable == nil {
             conditions[scenario.rawValue] = passed
         }
         if passed { remaining = remaining.dropFirst() }
         if !passed || remaining.isEmpty {
+            finished = true
+            blocklistFixture?.stop()
             store?.invalidate()
             runtime.finishBrowserCheck(ok: passed, values: results())
             return
@@ -425,6 +476,13 @@ final class PasswordPromptCheck {
         rendererForm = "unprobed"
         settled = 0
         didReopen = false
+        caseDeadline = nil
         phase = .start
+    }
+
+    private func fail(_ action: String, runtime: Runtime) {
+        failedAction = action
+        updateDetails(tab)
+        record(false, runtime: runtime)
     }
 }
