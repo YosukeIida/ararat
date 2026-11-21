@@ -1644,6 +1644,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   std::unique_ptr<AraratWindowHostCore> core_;
   std::unique_ptr<AraratDownloads> downloads_;
   ARSiteState* site_state_;
+  BOOL password_offer_update_queued_;
   ARCapture* capture_;
   BOOL extension_update_queued_;
   std::map<BrowserWindowInterface*, std::unique_ptr<StripObserver>> strip_observers_;
@@ -3996,6 +3997,19 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
     strong->extension_update_queued_ = NO;
     if ([strong.delegate respondsToSelector:@selector(extensionActionsChangedForWindowHost:)])
       [strong.delegate extensionActionsChangedForWindowHost:strong];
+  }));
+}
+
+- (void)queuePasswordOfferChanged {
+  if (password_offer_update_queued_) return;
+  password_offer_update_queued_ = YES;
+  __weak ARWindowHost* host = self;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(^{
+    ARWindowHost* strong = host;
+    if (!strong) return;
+    strong->password_offer_update_queued_ = NO;
+    if ([strong.delegate respondsToSelector:@selector(siteStateChangedForWindowHost:)])
+      [strong.delegate siteStateChangedForWindowHost:strong];
   }));
 }
 

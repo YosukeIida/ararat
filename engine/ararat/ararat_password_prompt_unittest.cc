@@ -6,6 +6,7 @@
 #include "base/functional/bind.h"
 #include "base/test/bind.h"
 #include "chrome/browser/password_manager/factories/profile_password_store_factory.h"
+#include "chrome/browser/ui/passwords/bubble_controllers/manage_passwords_bubble_controller.h"
 #include "chrome/browser/ui/passwords/passwords_model_delegate_mock.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
@@ -16,17 +17,44 @@
 #include "components/password_manager/core/browser/password_store/test_password_store.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/models/dialog_model.h"
+#include "ui/base/models/simple_combobox_model.h"
+#include "ui/base/mojom/ui_base_types.mojom.h"
+#include "ui/views/bubble/bubble_dialog_model_host.h"
+#include "ui/views/controls/editable_combobox/editable_password_combobox.h"
+#include "ui/views/test/views_test_base.h"
+#include "ui/views/view_class_properties.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
 namespace {
 
 using Action = AraratPasswordPromptModel::Action;
+using DisplayReason = PasswordBubbleControllerBase::DisplayReason;
 using password_manager::ui::State;
 using testing::_;
 using testing::NiceMock;
 using testing::Return;
 using testing::ReturnRef;
+
+using AraratPasswordPromptViewsTest = views::ViewsTestBase;
+
+TEST_F(AraratPasswordPromptViewsTest, ModalHostKeepsPasswordFieldIdentifier) {
+  auto dialog = ui::DialogModel::Builder().Build();
+  auto field = std::make_unique<views::EditablePasswordCombobox>(
+      std::make_unique<ui::SimpleComboboxModel>(
+          std::vector<ui::SimpleComboboxModel::Item>()),
+      views::style::CONTEXT_TEXTFIELD, views::style::STYLE_PRIMARY_MONOSPACED,
+      /*display_arrow=*/false);
+  auto* password = field.get();
+  AraratAddPasswordField(*dialog, std::move(field));
+  auto host = views::BubbleDialogModelHost::CreateModal(
+      std::move(dialog), ui::mojom::ModalType::kChild);
+
+  const auto id = password->GetProperty(views::kElementIdentifierKey);
+  ASSERT_TRUE(id);
+  EXPECT_EQ(host->GetContentsView()->GetViewByElementId(id), password);
+}
 
 class TestStore : public password_manager::TestPasswordStore {
  public:
@@ -74,11 +102,12 @@ class AraratPasswordPromptTest : public ChromeRenderViewHostTestHarness {
                 ->GetSmartBubbleStatsStore();
   }
 
-  std::unique_ptr<AraratPasswordPromptModel> Show() {
+  std::unique_ptr<AraratPasswordPromptModel> Show(
+      DisplayReason reason = DisplayReason::kAutomatic) {
     EXPECT_CALL(*delegate_, OnBubbleShown()).Times(1);
     return std::make_unique<AraratPasswordPromptModel>(
         delegate_->AsWeakPtr(),
-        base::BindLambdaForTesting([this] { return can_save_; }));
+        base::BindLambdaForTesting([this] { return can_save_; }), reason);
   }
 
   password_manager::PasswordForm pending_;
@@ -95,13 +124,17 @@ TEST_F(AraratPasswordPromptTest, OnlyPendingSaveAndUpdateAreSupported) {
   EXPECT_FALSE(AraratPasswordPromptModel::Supports(State::SAVE_CONFIRMATION_STATE));
   EXPECT_FALSE(AraratPasswordPromptModel::Supports(State::UPDATE_CONFIRMATION_STATE));
   EXPECT_FALSE(AraratPasswordPromptModel::Supports(State::GENERATED_PASSWORD_CONFIRMATION_STATE));
+  EXPECT_TRUE(AraratPasswordPromptModel::SupportsConfirmation(State::SAVE_CONFIRMATION_STATE));
+  EXPECT_TRUE(AraratPasswordPromptModel::SupportsConfirmation(State::UPDATE_CONFIRMATION_STATE));
+  EXPECT_FALSE(AraratPasswordPromptModel::SupportsConfirmation(State::GENERATED_PASSWORD_CONFIRMATION_STATE));
+  EXPECT_FALSE(AraratPasswordPromptModel::SupportsConfirmation(State::MANAGE_STATE));
 }
 
 TEST_F(AraratPasswordPromptTest, UsernameEditRetargetsSaveToAnExistingLogin) {
   auto prompt = Show();
   EXPECT_FALSE(prompt->IsUpdate());
   EXPECT_TRUE(prompt->CanNever());
-  prompt->EditUsername(u"existing-user");
+  prompt->EditCredential(u"existing-user", pending_.password_value);
   EXPECT_TRUE(prompt->IsUpdate());
   EXPECT_FALSE(prompt->CanNever());
   EXPECT_CALL(*delegate_, NeverSavePassword()).Times(0);
@@ -120,7 +153,7 @@ TEST_F(AraratPasswordPromptTest, EditingAnUpdateCanCreateANewLogin) {
   pending_.username_value = u"existing-user";
   auto prompt = Show();
   EXPECT_TRUE(prompt->IsUpdate());
-  prompt->EditUsername(u"new-user");
+  prompt->EditCredential(u"new-user", pending_.password_value);
   EXPECT_FALSE(prompt->IsUpdate());
   EXPECT_FALSE(prompt->CanNever());
   EXPECT_CALL(*delegate_, SavePassword(std::u16string(u"new-user"),
@@ -148,12 +181,55 @@ TEST_F(AraratPasswordPromptTest, NotNowRoutesToSaveDismissal) {
   EXPECT_FALSE(prompt->Act(Action::kNotNow));
 }
 
-TEST_F(AraratPasswordPromptTest, ImplicitCloseDoesNotIncreaseDismissals) {
+TEST_F(AraratPasswordPromptTest, AutomaticImplicitCloseIncreasesDismissals) {
   auto prompt = Show();
   EXPECT_CALL(*delegate_, OnNoInteraction()).Times(1);
   EXPECT_CALL(*delegate_, OnNotNowClicked()).Times(0);
+  EXPECT_CALL(stats_store(), AddSiteStats(testing::Field(
+                                 &password_manager::InteractionsStats::dismissal_count,
+                                 1)));
+  prompt->Close();
+}
+
+TEST_F(AraratPasswordPromptTest, ManualImplicitCloseDoesNotIncreaseDismissals) {
+  auto prompt = Show(DisplayReason::kUserAction);
+  EXPECT_CALL(*delegate_, OnNoInteraction()).Times(1);
   EXPECT_CALL(stats_store(), AddSiteStats(_)).Times(0);
   prompt->Close();
+}
+
+TEST_F(AraratPasswordPromptTest, EditingPasswordRejectsEmptyAndSavesChangedValue) {
+  auto prompt = Show();
+  prompt->EditCredential(pending_.username_value, {});
+  EXPECT_FALSE(prompt->Act(Action::kAccept));
+  password_manager::PasswordString edited(u"edited");
+  prompt->EditCredential(pending_.username_value, edited);
+  EXPECT_CALL(*delegate_, SavePassword(pending_.username_value, edited));
+  EXPECT_TRUE(prompt->Act(Action::kAccept));
+}
+
+TEST_F(AraratPasswordPromptTest, AutomaticConfirmationIsReadOnly) {
+  state_ = State::SAVE_CONFIRMATION_STATE;
+  EXPECT_CALL(*delegate_, GetPendingPassword()).Times(0);
+  EXPECT_CALL(*delegate_, SavePassword(_, _)).Times(0);
+  EXPECT_CALL(*delegate_, OnBubbleShown()).Times(1);
+  EXPECT_CALL(*delegate_, OnBubbleHidden()).Times(1);
+  ManagePasswordsBubbleController confirmation(delegate_->AsWeakPtr());
+  confirmation.OnBubbleClosing();
+}
+
+TEST_F(AraratPasswordPromptTest, ManualReopenRequiresAuthenticationToReveal) {
+  auto prompt = Show(DisplayReason::kUserAction);
+  EXPECT_CALL(*delegate_, AuthenticateUserWithMessage(_, _))
+      .WillOnce([](const std::u16string&, auto callback) {
+        std::move(callback).Run(false);
+      });
+  bool called = false;
+  prompt->ShouldRevealPasswords(base::BindLambdaForTesting([&called](bool shown) {
+    called = true;
+    EXPECT_FALSE(shown);
+  }));
+  EXPECT_TRUE(called);
 }
 
 TEST_F(AraratPasswordPromptTest, NotNowIncreasesExistingDismissalCount) {

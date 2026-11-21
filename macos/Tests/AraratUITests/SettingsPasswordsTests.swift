@@ -284,4 +284,42 @@ struct SettingsPasswordsTests {
         #expect(!model.showingPassword)
         #expect(model.revealed.stringValue.isEmpty)
     }
+
+    @Test func hidingADirtyPasswordRequiresAnExplicitDiscard() throws {
+        _ = NSApplication.shared
+        let model = SettingsPasswordsModel()
+        let engine = PasswordsFixture()
+        let row = PasswordRow("1", "https://calendar.test", "Sam")
+        model.configure(profile: "Default", openWebsite: { _ in }) { $0(engine) }
+        model.unlock()
+        engine.auth?(true)
+        engine.snapshots.last?(.ready, [row])
+        model.detail(row)
+        func editAndHide() throws {
+            model.toggleReveal()
+            let reveal = try #require(engine.reveal)
+            Array("fixture".utf16).withUnsafeBufferPointer {
+                reveal($0.baseAddress, UInt($0.count))
+            }
+            model.passwordDidChange()
+            model.toggleReveal()
+        }
+        try editAndHide()
+        #expect(model.confirmDiscardPassword)
+        model.confirmDiscardPassword = false
+        #expect(model.showingPassword && model.passwordChanged)
+        model.username = "Pat"
+        model.toggleReveal()
+        model.discardPasswordEdit()
+        #expect(!model.confirmDiscardPassword && !model.showingPassword && !model.passwordChanged)
+        let clearedAfterDiscard = model.revealed.stringValue.isEmpty
+        #expect(clearedAfterDiscard)
+        #expect(model.username == "Pat" && model.canSaveDetail)
+        #expect(engine.edited == nil)
+        try editAndHide()
+        model.lock()
+        #expect(!model.confirmDiscardPassword && !model.showingPassword)
+        let clearedAfterLock = model.revealed.stringValue.isEmpty
+        #expect(clearedAfterLock)
+    }
 }

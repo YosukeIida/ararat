@@ -65,6 +65,7 @@ public struct LittleWindowBarModel: Equatable {
     public var defaultSpaceID: String?
     /// The live tab's URL; nil when the Little Window has no page.
     public var pageURL: String?
+    public var passwordOfferTitle: String?
     /// What is typed into the space menu's search field.
     public var search: String = ""
 
@@ -328,6 +329,7 @@ final class LittleWindowBarButton: NSButton {
 public final class LittleWindowBarView: NSView {
     public var onProfile: (() -> Void)?
     public var onCopy: (() -> Void)?
+    public var onPasswordOffer: (() -> Void)?
     public var onExtensions: (() -> Void)?
     public var onOpen: (() -> Void)?
     public var onChooseSpace: (() -> Void)?
@@ -340,6 +342,9 @@ public final class LittleWindowBarView: NSView {
     private let glyph = NSImageView()
     private let address = NSTextField(labelWithString: "")
     private let copyButton = LittleWindowBarButton(style: .icon, symbol: "link", title: "Copy Link")
+    private let passwordOfferButton = URLFieldButton(role: .passwordOffer)
+    private var passwordOfferWidth: NSLayoutConstraint!
+    private var passwordOfferSpacing: NSLayoutConstraint!
     private let extensionsButton = LittleWindowBarButton(style: .icon, symbol: "square.grid.2x2", title: "Extensions")
     private let openButton = LittleWindowBarButton(style: .text, symbol: nil, title: "Open in", caps: "⌘O")
     private let chevronButton = LittleWindowBarButton(style: .chevron, symbol: "chevron.down", title: "Choose a space")
@@ -379,6 +384,13 @@ public final class LittleWindowBarView: NSView {
         copyButton.setAccessibilityLabel("Copy Link")
         copyButton.toolTip = "Copy Link"
         addSubview(copyButton)
+        passwordOfferButton.target = self
+        passwordOfferButton.action = #selector(passwordOfferClicked(_:))
+        passwordOfferButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(passwordOfferButton)
+        passwordOfferWidth = passwordOfferButton.widthAnchor.constraint(equalToConstant: 0)
+        passwordOfferSpacing = passwordOfferButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor,
+                                                                              constant: -copyButton.alignmentRectInsets.left)
         extensionsButton.target = self
         extensionsButton.action = #selector(extensionsClicked(_:))
         extensionsButton.setAccessibilityLabel("Extensions")
@@ -419,9 +431,13 @@ public final class LittleWindowBarView: NSView {
             extensionsButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             copyButton.trailingAnchor.constraint(equalTo: extensionsButton.leadingAnchor, constant: -4),
             copyButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            passwordOfferWidth,
+            passwordOfferSpacing,
+            passwordOfferButton.heightAnchor.constraint(equalToConstant: 24),
+            passwordOfferButton.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             addressArea.leadingAnchor.constraint(equalTo: leadingAnchor, constant: LittleWindowMetrics.addressInset),
-            addressArea.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -copyButton.alignmentRectInsets.left),
+            addressArea.trailingAnchor.constraint(equalTo: passwordOfferButton.leadingAnchor),
             addressArea.topAnchor.constraint(equalTo: topAnchor),
             addressArea.bottomAnchor.constraint(equalTo: bottomAnchor),
             addressGroup.leadingAnchor.constraint(equalTo: glyph.leadingAnchor, constant: -glyph.alignmentRectInsets.left),
@@ -484,6 +500,7 @@ public final class LittleWindowBarView: NSView {
     public var checkChevronFrame: NSRect { chevronButton.frame }
     public var checkProfileFrame: NSRect { profileButton.frame }
     public var checkCopyFrame: NSRect { copyButton.frame }
+    public var checkPasswordOfferButton: NSButton { passwordOfferButton }
     public var checkExtensionsFrame: NSRect { extensionsButton.frame }
 
     public func checkClickProfile() { profileButton.performClick(nil) }
@@ -501,6 +518,9 @@ public final class LittleWindowBarView: NSView {
         openButton.setTitle(model.openInTitle)
         openButton.isEnabled = model.openEnabled
         copyButton.isEnabled = model.copyEnabled
+        passwordOfferButton.showPasswordOffer(model.passwordOfferTitle)
+        passwordOfferWidth.constant = model.passwordOfferTitle == nil ? 0 : 24
+        passwordOfferSpacing.constant = -copyButton.alignmentRectInsets.left - (model.passwordOfferTitle == nil ? 0 : 4)
         extensionsButton.isEnabled = true
         setAccessibilityLabel("Little Window bar")
         profileButton.setAccessibilityValue(model.profileName)
@@ -510,6 +530,7 @@ public final class LittleWindowBarView: NSView {
 
     @objc private func profileClicked(_ sender: Any?) { onProfile?() }
     @objc private func copyClicked(_ sender: Any?) { onCopy?() }
+    @objc private func passwordOfferClicked(_ sender: Any?) { onPasswordOffer?() }
     @objc private func extensionsClicked(_ sender: Any?) { onExtensions?() }
     @objc private func openClicked(_ sender: Any?) { onOpen?() }
     @objc private func spaceClicked(_ sender: Any?) { onChooseSpace?() }

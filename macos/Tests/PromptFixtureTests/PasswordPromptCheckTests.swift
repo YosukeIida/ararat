@@ -3,6 +3,20 @@ import Testing
 @testable import Ararat
 
 @Test @MainActor
+func neverScenariosShareAnOriginIsolatedFromAllOtherPasswordCases() {
+    typealias Scenario = PasswordPromptCheck.Scenario
+    for scenario in Scenario.allCases {
+        switch scenario {
+        case .never, .neverAgain:
+            #expect(scenario.fixturePort(primary: 9000, blocklist: 9001) == 9001)
+            #expect(scenario.fixturePort(primary: 9000, blocklist: nil) == nil)
+        default:
+            #expect(scenario.fixturePort(primary: 9000, blocklist: 9001) == 9000)
+        }
+    }
+}
+
+@Test @MainActor
 func passwordCaptureRequiresTwoMatchingOpaqueSamples() {
     let frame = CGRect(x: 100, y: 200, width: 448, height: 204)
     typealias Sample = PasswordPromptCheck.CaptureSample

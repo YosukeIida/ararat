@@ -213,6 +213,26 @@ public final class SidebarView: NSView {
     private var textLeadingAfterGear: [NSLayoutConstraint] = []
     private var copiedGeneration = 0
     private let siteControlsButton = SiteControlsButton()
+    private let passwordOfferButton = URLFieldButton(role: .passwordOffer)
+    private var passwordOfferWidth: NSLayoutConstraint!
+    private var passwordOfferSpacing: NSLayoutConstraint!
+    private var passwordOfferTitle: String?
+    public var onPasswordOffer: (() -> Void)?
+    public var checkPasswordOfferButton: NSButton { passwordOfferButton }
+
+    public func showPasswordOffer(_ title: String?) {
+        guard passwordOfferTitle != title else { return }
+        passwordOfferTitle = title
+        updatePasswordOffer()
+        updateExtensionLayout()
+    }
+
+    private func updatePasswordOffer() {
+        let title = copyLinkButton.isHidden ? nil : passwordOfferTitle
+        passwordOfferButton.showPasswordOffer(title)
+        passwordOfferWidth.constant = title == nil ? 0 : 24
+        passwordOfferSpacing.constant = title == nil ? 0 : -4
+    }
     private let inFieldActions = ExtensionActionsStrip()
     public let actionsRow = ExtensionActionsRow()
     private var hostTrailingToActions: [NSLayoutConstraint] = []
@@ -1144,6 +1164,12 @@ public final class SidebarView: NSView {
         siteControlsButton.translatesAutoresizingMaskIntoConstraints = false
         urlField.addSubview(siteControlsButton)
 
+        passwordOfferButton.target = self
+        passwordOfferButton.action = #selector(passwordOfferClicked)
+        passwordOfferButton.translatesAutoresizingMaskIntoConstraints = false
+        passwordOfferButton.showPasswordOffer(nil)
+        urlField.addSubview(passwordOfferButton)
+
         inFieldActions.translatesAutoresizingMaskIntoConstraints = false
         inFieldActions.onOpen = { [weak self] item, button in self?.openExtension(item, from: button) }
         inFieldActions.onMenu = { [weak self] item, button in self?.extensionMenu(item, from: button) }
@@ -1269,11 +1295,13 @@ public final class SidebarView: NSView {
         }
         inFieldActionsWidth = inFieldActions.widthAnchor.constraint(equalToConstant: 0)
         hostTrailingToCopy = [hostClip].map {
-            $0.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor, constant: -4)
+            $0.trailingAnchor.constraint(equalTo: passwordOfferButton.leadingAnchor, constant: -4)
         }
         hostTrailingToEdge = [hostClip].map {
             $0.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -SidebarView.fieldTextInset)
         }
+        passwordOfferWidth = passwordOfferButton.widthAnchor.constraint(equalToConstant: 0)
+        passwordOfferSpacing = passwordOfferButton.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor)
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: leadingAnchor),
             column.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -1293,7 +1321,7 @@ public final class SidebarView: NSView {
             gearIcon.heightAnchor.constraint(equalToConstant: 16),
             hostClip.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
             hostClip.heightAnchor.constraint(equalToConstant: URLFieldTextClipView.height),
-            inFieldActions.trailingAnchor.constraint(equalTo: copyLinkButton.leadingAnchor, constant: -4),
+            inFieldActions.trailingAnchor.constraint(equalTo: passwordOfferButton.leadingAnchor, constant: -4),
             inFieldActions.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
             inFieldActions.heightAnchor.constraint(equalToConstant: 24),
             inFieldActionsWidth!,
@@ -1302,6 +1330,10 @@ public final class SidebarView: NSView {
             copyLinkButton.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
             copyLinkButton.widthAnchor.constraint(equalToConstant: 24),
             copyLinkButton.heightAnchor.constraint(equalToConstant: 24),
+            passwordOfferWidth,
+            passwordOfferSpacing,
+            passwordOfferButton.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
+            passwordOfferButton.heightAnchor.constraint(equalToConstant: 24),
             siteControlsButton.trailingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: -4),
             siteControlsButton.centerYAnchor.constraint(equalTo: urlField.centerYAnchor),
             siteControlsButton.widthAnchor.constraint(equalToConstant: 24),
@@ -1533,7 +1565,8 @@ public final class SidebarView: NSView {
         // With no buttons (no tab) the text area runs to the same inset on the right.
         let trailing = copyLinkButton.isHidden && siteControlsButton.isHidden
             ? Self.fieldTextInset : Self.fieldButtonCluster
-        return urlField.bounds.width - Self.fieldTextInset - trailing - prefix
+        let passwordOffer: CGFloat = passwordOfferButton.isHidden ? 0 : 28
+        return urlField.bounds.width - Self.fieldTextInset - trailing - prefix - passwordOffer
     }
 
     private func updateExtensionActions() {
@@ -1548,6 +1581,8 @@ public final class SidebarView: NSView {
     @objc private func siteControlsClicked() {
         onSiteControls?(siteControlsButton.convert(siteControlsButton.bounds, to: nil))
     }
+
+    @objc private func passwordOfferClicked() { onPasswordOffer?() }
 
     private func openExtension(_ item: ExtensionActionItem, from button: ExtensionActionButton) {
         let anchor = button.anchorInWindow
@@ -1678,6 +1713,7 @@ public final class SidebarView: NSView {
         copyLinkButton.isEnabled = content.canCopy
         copyLinkButton.isHidden = content.hidesButtons
         siteControlsButton.isHidden = content.hidesButtons
+        updatePasswordOffer()
         host.stringValue = content.text
         host.isHidden = content.showsPlaceholder
         placeholder.isHidden = !content.showsPlaceholder
@@ -2416,6 +2452,7 @@ public final class SidebarView: NSView {
             urlField.accent = accent
             copyLinkButton.accent = accent
             siteControlsButton.accent = accent
+            passwordOfferButton.accent = accent
             pullIndicator.accent = accent
             libraryButton.accent = accent
             for row in rowViews.values { row.accent = accent }

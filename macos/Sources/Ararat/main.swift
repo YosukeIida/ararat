@@ -796,6 +796,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var unread = UnreadTracker()
   var seededNewTabRow: String?
   var commandPresenter: CommandBarPresenter?
+  private var reopenCommandPasswordOffer: (() -> Void)?
   var tabSwitcher: TabSwitcher?
   var tabSwitcherScreenCheck: TabSwitcherScreenCheck?
   var commandBarConditions: [String: Bool] = [:]
@@ -1498,7 +1499,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     sidebar.onFaviconRowsChanged = { [weak self] in self?.refreshSidebarFavicons() }
     self.container = container
     if !isPrivateWindow {
-      container.onPresentationChanged = { [weak self] in self?.saveWindowPresentation() }
+      container.onPresentationChanged = { [weak self] in
+        self?.saveWindowPresentation()
+        self?.refreshPasswordOffer()
+      }
       for observer in windowPlacementObservers { NotificationCenter.default.removeObserver(observer) }
       windowPlacementObservers = [NSWindow.didMoveNotification, NSWindow.didResizeNotification].map { name in
         NotificationCenter.default.addObserver(forName: name, object: host.window(), queue: .main) { [weak self] _ in
@@ -2861,6 +2865,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   func refreshSiteState() {
     guard hasUsableHost else { return }
     let state = adapter?.siteState()
+    refreshPasswordOffer()
     siteState = state
     sidebar?.siteControlsBlocked = state?.blocked ?? false
     // S1: a navigation or tab switch while the region overlay is up cancels the selection.
@@ -2873,6 +2878,29 @@ final class Runtime: NSObject, NSMenuItemValidation {
       lastSiteFingerprint = fingerprint
       if let state, let controls = siteControls, controls.isShown { controls.reload(model: state) }
     }
+  }
+
+  private func refreshPasswordOffer() {
+    let offer = focusedPasswordOffer()
+    sidebar?.showPasswordOffer(offer?.title)
+    sidebar?.onPasswordOffer = offer?.reopen
+    refreshPasswordOfferCommand(offer)
+  }
+
+  private func focusedPasswordOffer() -> (title: String, reopen: () -> Void)? {
+    guard let host, let live = adapter?.captureNavigationTarget()?["live"] as? String,
+          let tab = (host.tabs() as? [any ARTabAPI])?.first(where: { $0.liveId == live }) else { return nil }
+    let offer = tab.passwordOffer
+    guard offer.generation != 0 else { return nil }
+    let title = offer.isUpdate.boolValue ? "Update Password…" : "Save Password…"
+    return (title, { [weak tab] in _ = tab?.reopenPasswordOffer(offer.generation) })
+  }
+
+  private func refreshPasswordOfferCommand(_ offer: (title: String, reopen: () -> Void)?) {
+    let available = container?.sidebarState == "hidden" || container?.pageFullscreen == true ||
+        host?.window().styleMask.contains(.fullScreen) == true
+    commandPresenter?.controller.passwordOfferTitle = available ? offer?.title : nil
+    reopenCommandPasswordOffer = available ? offer?.reopen : nil
   }
 
   static func siteFingerprint(_ state: SiteState?) -> String {
@@ -3088,6 +3116,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let presenter = CommandBarPresenter(parent: host.window(), pageCard: container?.pageCard, visible: !hidden,
       bindings: keyBindings?.bindings ?? [], highlight: spaceAccent)
     commandPresenter = presenter
+    refreshPasswordOfferCommand(focusedPasswordOffer())
     presenter.onClose = { [weak self, weak presenter] in
       if self?.commandPresenter === presenter { self?.commandPresenter = nil }
     }
@@ -3132,6 +3161,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
           workspace.openFolder(id: id) { [weak self] in self?.showResult($0) }
         }
       case .command(let id):
+        if id == CommandBarController.passwordOfferCommand {
+          self.reopenCommandPasswordOffer?()
+          return
+        }
         if id == "pin_tab" || id == "close_tab" {
           guard self.snapshot.selectedId == capturedItem, let target, adapter.isCurrentNavigationTarget(target) else { return }
           if id == "close_tab", let item = capturedItem, let live = target["live"] as? String {
@@ -10456,7 +10489,7 @@ let araratMain = unsafeBitCast(symbol, to: AraratMain.self)
 if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") }) {
   let screen = argument.hasPrefix("--ararat-screen=")
   let name = String(argument.dropFirst(screen ? 16 : 15))
-  let watchdogSeconds = ["atc-routing", "keyboard", "errorpages", "downloads", "toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "split-commands", "urlfield", "screen-urlfield", "header", "site-controls", "ext-actions"].contains(name) ? 120 : 60
+  let watchdogSeconds = ["atc-routing", "keyboard", "errorpages", "downloads", "toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "split-commands", "urlfield", "screen-urlfield", "header", "site-controls", "ext-actions", "password-prompt"].contains(name) ? 120 : 60
   let timer = DispatchSource.makeTimerSource(queue: .global())
   timer.schedule(deadline: .now() + .seconds(watchdogSeconds))
   timer.setEventHandler {

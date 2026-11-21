@@ -129,7 +129,9 @@ func aSettingsScreenArgumentReachesItsModeAndBackThroughTheCheckMode() {
     #expect(SettingsScreenCheck.Mode.passwords.paneID == "passwords")
     #expect(SettingsScreenCheck.Mode.screenMode("passwords-real-auth") == .passwordsRealAuth)
     #expect(SettingsScreenCheck.Mode.passwordsRealAuth.paneID == "passwords")
-    #expect(SettingsScreenCheck.conditionNames(.passwords).suffix(6) == ["fake_auth", "fixtures", "locked", "search", "detail", "capture"])
+    #expect(SettingsScreenCheck.conditionNames(.passwords).suffix(7) == [
+        "fake_auth", "fixtures", "locked", "search", "detail", "discard_password_edit", "capture",
+    ])
     #expect(SettingsScreenCheck.Mode.about.paneID == "about")
     #expect(SettingsScreenCheck.conditionNames(.about).suffix(2) == ["rows", "capture"])
     #expect(SettingsScreenCheck.Mode.screenMode("settings-shortcuts") == .shortcuts)

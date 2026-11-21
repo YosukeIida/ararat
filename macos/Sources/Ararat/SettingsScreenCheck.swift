@@ -60,7 +60,7 @@ final class SettingsScreenCheck {
             case .frame: ["cards", "header_fade", "search_replaces_rail", "grouping", "no_results"]
             case .search: ["first_selected", "arrow_moves", "return_opens", "hit_look", "hit_scrolled", "highlight_stays"]
             case .tabs, .about: ["rows"]
-            case .passwords: ["fake_auth", "fixtures", "locked", "search", "detail"]
+            case .passwords: ["fake_auth", "fixtures", "locked", "search", "detail", "discard_password_edit"]
             case .passwordsRealAuth:
                 ["fake_auth_off", "fixtures", "fill_switch_hidden", "system_prompt_shown",
                  "cancel_keeps_locked", "password_unlocks"]

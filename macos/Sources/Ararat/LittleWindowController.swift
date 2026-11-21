@@ -64,6 +64,8 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     }
 
     var window: NSWindow? { popup.host?.window() }
+    var checkPasswordOfferButton: NSButton { bar.checkPasswordOfferButton }
+    var checkPasswordTab: (any ARTabAPI)? { pageTab }
     private var pageTab: (any ARTabAPI)? { (popup.host?.tabs() as? [any ARTabAPI])?.first }
 
     // MARK: - Layout
@@ -146,6 +148,14 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
         next.spaces = spaces
         next.defaultSpaceID = defaultSpaceID
         next.pageURL = pageTab?.url
+        if let tab = pageTab, tab.passwordOffer.generation != 0 {
+            let offer = tab.passwordOffer
+            next.passwordOfferTitle = offer.isUpdate.boolValue ? "Update Password…" : "Save Password…"
+            bar.onPasswordOffer = { [weak tab] in _ = tab?.reopenPasswordOffer(offer.generation) }
+        } else {
+            next.passwordOfferTitle = nil
+            bar.onPasswordOffer = nil
+        }
         model = next
         bar.model = next
     }
