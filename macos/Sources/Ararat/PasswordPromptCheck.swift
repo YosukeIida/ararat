@@ -50,6 +50,7 @@ final class PasswordPromptCheck {
     private var conditions: [String: Bool] = [:]
     private var captures: [String: [String: Any]] = [:]
     private var rendererForm = "unprobed"
+    private var failedAction: String?
     private var details: [String: Any] = [:]
     private nonisolated static let latestDetails = OSAllocatedUnfairLock(initialState: Data())
 
@@ -74,7 +75,7 @@ final class PasswordPromptCheck {
             default: page = target == nil ? "unavailable" : "other"
             }
         }
-        let current: [String: Any] = [
+        var current: [String: Any] = [
             "case": remaining.first?.rawValue ?? "done", "step": phase.rawValue,
             "controller_state": target?.checkPasswordPromptState() ?? -1,
             "dialog_exists": target?.checkHasPasswordPrompt() ?? false,
@@ -82,6 +83,7 @@ final class PasswordPromptCheck {
             "fixture_page_state": page, "renderer_form": rendererForm,
             "callback_pending": pending,
         ]
+        if let failedAction { current["failed_action"] = failedAction }
         if !NSDictionary(dictionary: current).isEqual(to: details),
            let data = try? JSONSerialization.data(withJSONObject: current, options: [.sortedKeys]) {
             details = current
@@ -232,9 +234,13 @@ final class PasswordPromptCheck {
             switch scenario {
             case .save, .update:
                 if scenario == .save {
-                    guard tab.checkPasswordPromptAction("clearPassword"),
-                          tab.checkPasswordPromptAction("editPassword") else {
-                        record(false, runtime: runtime); return
+                    for action in ["clearPassword", "editPassword"] {
+                        guard tab.checkPasswordPromptAction(action) else {
+                            failedAction = action
+                            updateDetails(tab)
+                            record(false, runtime: runtime)
+                            return
+                        }
                     }
                 }
                 captureDeadline = ProcessInfo.processInfo.systemUptime + Self.captureTimeout

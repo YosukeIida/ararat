@@ -99,6 +99,10 @@ source_set("passwords_unit_tests") {
     "//content/test:test_support",
     "//testing/gmock",
     "//testing/gtest",
+    "//ui/base",
+    "//ui/base/mojom:ui_base_types",
+    "//ui/views",
+    "//ui/views:test_support",
     "//url",
   ]
 }

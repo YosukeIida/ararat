@@ -43,7 +43,6 @@
 #include "ui/base/mojom/ui_base_types.mojom.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/bubble/bubble_dialog_model_host.h"
-#include "ui/views/view_class_properties.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/editable_combobox/editable_password_combobox.h"
 #include "ui/views/controls/label.h"
@@ -143,6 +142,19 @@ DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kUsername);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kPassword);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kAccept);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kNever);
+
+}  // namespace
+
+void AraratAddPasswordField(
+    ui::DialogModel& dialog,
+    std::unique_ptr<views::EditablePasswordCombobox> field) {
+  dialog.AddCustomField(
+      std::make_unique<views::BubbleDialogModelHost::CustomView>(
+          std::move(field), views::BubbleDialogModelHost::FieldType::kControl),
+      kPassword);
+}
+
+namespace {
 
 bool CheckMode() {
   return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
@@ -326,21 +338,19 @@ class Prompt {
         .AddCustomField(std::make_unique<views::BubbleDialogModelHost::CustomView>(
             std::move(site), views::BubbleDialogModelHost::FieldType::kText))
         .SetDialogDestroyingCallback(base::BindOnce(&Prompt::Destroyed, weak));
+    std::unique_ptr<views::EditablePasswordCombobox> password;
     if (model_) {
-      auto password = std::make_unique<views::EditablePasswordCombobox>(
+      password = std::make_unique<views::EditablePasswordCombobox>(
           std::make_unique<ui::SimpleComboboxModel>(
               std::vector<ui::SimpleComboboxModel::Item>()),
           views::style::CONTEXT_TEXTFIELD, views::style::STYLE_PRIMARY_MONOSPACED,
           /*display_arrow=*/false, base::BindRepeating(&Prompt::ToggleReveal, weak));
-      password->SetProperty(views::kElementIdentifierKey, kPassword);
       password->GetViewAccessibility().SetName(u"Password");
       password->SetPasswordIconTooltips(u"Show password", u"Hide password");
       password->SetText(model_->credential().password_value.secure_value());
       password->SetCallback(base::BindRepeating(&Prompt::CredentialChanged, weak));
       password_ = password.get();
       builder.AddTextfield(kUsername, u"User name", model_->credential().username_value)
-          .AddCustomField(std::make_unique<views::BubbleDialogModelHost::CustomView>(
-              std::move(password), views::BubbleDialogModelHost::FieldType::kControl))
           .SetInitiallyFocusedField(kUsername)
           .AddOkButton(base::BindOnce(&Prompt::Act, weak, Action::kAccept),
                        ui::DialogModel::Button::Params().SetId(kAccept).SetLabel(
@@ -359,6 +369,7 @@ class Prompt {
     }
     auto dialog = builder.Build();
     if (model_) {
+      AraratAddPasswordField(*dialog, std::move(password));
       dialog_ = dialog.get();
       username_ = dialog_->GetTextfieldByUniqueId(kUsername);
       edit_subscription_ = username_->AddOnFieldChangedCallback(

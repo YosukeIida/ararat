@@ -17,6 +17,13 @@
 #include "components/password_manager/core/browser/password_store/test_password_store.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/models/dialog_model.h"
+#include "ui/base/models/simple_combobox_model.h"
+#include "ui/base/mojom/ui_base_types.mojom.h"
+#include "ui/views/bubble/bubble_dialog_model_host.h"
+#include "ui/views/controls/editable_combobox/editable_password_combobox.h"
+#include "ui/views/test/views_test_base.h"
+#include "ui/views/view_class_properties.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -29,6 +36,25 @@ using testing::_;
 using testing::NiceMock;
 using testing::Return;
 using testing::ReturnRef;
+
+using AraratPasswordPromptViewsTest = views::ViewsTestBase;
+
+TEST_F(AraratPasswordPromptViewsTest, ModalHostKeepsPasswordFieldIdentifier) {
+  auto dialog = ui::DialogModel::Builder().Build();
+  auto field = std::make_unique<views::EditablePasswordCombobox>(
+      std::make_unique<ui::SimpleComboboxModel>(
+          std::vector<ui::SimpleComboboxModel::Item>()),
+      views::style::CONTEXT_TEXTFIELD, views::style::STYLE_PRIMARY_MONOSPACED,
+      /*display_arrow=*/false);
+  auto* password = field.get();
+  AraratAddPasswordField(*dialog, std::move(field));
+  auto host = views::BubbleDialogModelHost::CreateModal(
+      std::move(dialog), ui::mojom::ModalType::kChild);
+
+  const auto id = password->GetProperty(views::kElementIdentifierKey);
+  ASSERT_TRUE(id);
+  EXPECT_EQ(host->GetContentsView()->GetViewByElementId(id), password);
+}
 
 class TestStore : public password_manager::TestPasswordStore {
  public:

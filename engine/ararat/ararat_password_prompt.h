@@ -1,6 +1,7 @@
 #ifndef ARARAT_CORE_ARARAT_PASSWORD_PROMPT_H_
 #define ARARAT_CORE_ARARAT_PASSWORD_PROMPT_H_
 
+#include <memory>
 #include <string>
 
 #include "base/functional/callback.h"
@@ -11,9 +12,17 @@
 namespace content {
 class WebContents;
 }
+namespace ui {
+class DialogModel;
+}
 namespace views {
+class EditablePasswordCombobox;
 class Widget;
 }
+
+void AraratAddPasswordField(
+    ui::DialogModel& dialog,
+    std::unique_ptr<views::EditablePasswordCombobox> field);
 
 class AraratPasswordPromptModel {
  public:
