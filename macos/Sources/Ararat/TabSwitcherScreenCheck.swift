@@ -710,6 +710,14 @@ final class TabSwitcherScreenCheck {
         }
 
         await scene("little_window_handoff") {
+            // Settle a live selection before the popup opens so a deferred workspace selection cannot open a replacement tab during handoff.
+            let green = try await open(runtime, url: url("green"))
+            try await wait("Little Window host selection mapped", observed: {
+                runtime.checkSelectionDiagnostics(item: green)
+            }) {
+                guard let live = self.tab(runtime, green)?.liveId, host.activeItemId() == green else { return false }
+                return adapter.session.queue.sync { adapter.session.store?.liveTab(item: green) } == live
+            }
             runtime.openLittleWindow(url: url("red") + "?handoff")
             defer { for little in runtime.littleWindows { little.window?.close() } }
             try await wait("Little Window document", observed: {
@@ -742,16 +750,26 @@ final class TabSwitcherScreenCheck {
             }
             guard let handedItem else { throw CheckFailure(condition: "handoff item missing") }
             scenarioItems.append(handedItem)
-            try await awaitPicture(runtime, handedItem, "red")
-            _ = try await open(runtime, url: url("green"))
+            let reserveStart = ProcessInfo.processInfo.systemUptime
+            let reserveTimeout: TimeInterval = 2.5
+            func reserveWaitMS() -> Double { 1000 * (ProcessInfo.processInfo.systemUptime - reserveStart) }
+            try await wait("Little Window reserve completed while shown", timeout: reserveTimeout, observed: {
+                ["item": handedItem, "live": live, "reserve_wait_ms": reserveWaitMS(),
+                 "reserve_limit_ms": 1000 * reserveTimeout, "readbacks": self.readbacks(for: [live], since: mark)]
+            }) {
+                host.activeItemId() == handedItem &&
+                    self.hasEvent(mark: mark, live: live, source: "reserve", status: "completed")
+            }
+            let reserveElapsed = reserveWaitMS()
+            try await select(runtime, green)
             let panel = try await hold(runtime)
             try checkNamed("little_window_handoff", assertions: [
                 "preview_is_real": real(panel, handedItem, "red"),
                 "prehide_requested": hasEvent(mark: mark, live: live, source: "prehide", status: "requested"),
-                "readback_completed": hasEvent(mark: mark, live: live, source: "prehide", status: "completed") ||
-                    hasEvent(mark: mark, live: live, source: "reserve", status: "completed"),
+                "readback_completed": hasEvent(mark: mark, live: live, source: "reserve", status: "completed"),
             ], observed: ["item": handedItem, "live": live, "previous_navigation_count": navigationCount,
                           "current_navigation_count": tab(runtime, handedItem)?.navigationCount as Any? ?? NSNull(),
+                          "reserve_wait_ms": reserveElapsed, "reserve_limit_ms": 1000 * reserveTimeout,
                           "tile": previewDetails(panel.previewForCheck(item: handedItem), expected: "red"),
                           "readbacks": readbacks(for: [live], since: mark)])
         }
