@@ -6,6 +6,7 @@ final class PasswordsStoreCheck {
     private nonisolated static let modes: Set<String> = [
         "--ararat-check=passwords", "--ararat-screen=settings-passwords", "--ararat-screen=password-prompt",
         "--ararat-screen=passwords-real-auth", "--ararat-screen=passwords-touch-id",
+        "--ararat-check=" + ArcPasswordImportCheck.mode,
     ]
 
     nonisolated static func guardOptions(_ arguments: [String]) -> [String] {

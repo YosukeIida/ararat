@@ -27,12 +27,28 @@ private final class TestPasswords: NSObject, ARPasswordsAPI {
     func revealRow(_ rowID: String, completion: @escaping @MainActor @Sendable (UnsafePointer<unichar>?, UInt) -> Void) {
         completion(nil, 0)
     }
+    func checkWriteArcFixture(_ path: String) -> Bool { false }
+    func importArcPasswords(from path: String, completion: @escaping @MainActor @Sendable (ARArcPasswordImportStatus, ARArcPasswordImportCounts) -> Void) {
+        completion(.storeUnavailable, ARArcPasswordImportCounts())
+    }
     func invalidate() {}
 }
 
 @Suite @MainActor
 struct PasswordsBridgeTests {
     private static var deferred: (((any ARPasswordsAPI)?) -> Void)?
+
+    @Test func arcPasswordCheckStopsWithoutFixtureAuthentication() {
+        var result: [String: Bool]?
+        let check = ArcPasswordImportCheck(handle: TestPasswords()) { ok, values in
+            #expect(!ok)
+            result = values["conditions"] as? [String: Bool]
+        }
+        check.tick()
+        #expect(result?["fixture_guard"] == false)
+        #expect(result?["seed_submitted"] == nil)
+        #expect(result?["fixture_written"] == nil)
+    }
 
     @Test func forwardsNullableBlockAcrossCABI() {
         let fixture: AraratPasswordsFunction = { profile, loaded in
@@ -78,7 +94,8 @@ struct PasswordsBridgeTests {
     }
 
     @Test func passwordsGuardRecognizesBothChromiumSwitchPrefixes() {
-        for mode in ["ararat-check=passwords", "ararat-screen=settings-passwords", "ararat-screen=password-prompt",
+        for mode in ["ararat-check=passwords", "ararat-check=arc-password-import",
+                     "ararat-screen=settings-passwords", "ararat-screen=password-prompt",
                      "ararat-screen=passwords-real-auth", "ararat-screen=passwords-touch-id"] {
             for prefix in ["-", "--"] {
                 let launch = ["Ararat", prefix + mode, prefix + "use-mock-keychain"]
@@ -87,6 +104,7 @@ struct PasswordsBridgeTests {
                 let scratch = launch + [prefix + "user-data-dir=/tmp/pwswitch-test/profile",
                                         prefix + "ararat-db=/tmp/pwswitch-test/workspace"]
                 #expect(PasswordsStoreCheck.validArguments(scratch))
+                #expect(!PasswordsStoreCheck.validArguments(scratch.filter { !$0.hasSuffix("use-mock-keychain") }))
                 #expect(!PasswordsStoreCheck.validArguments(scratch + ["-ararat-screen=settings-passwords"]))
                 if mode == "ararat-screen=password-prompt" {
                     #expect(!PasswordsStoreCheck.validArguments(scratch + [prefix + "enable-automation"]))

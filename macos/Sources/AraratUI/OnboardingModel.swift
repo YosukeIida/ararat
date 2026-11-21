@@ -35,6 +35,7 @@ public struct OnboardingData: Sendable {
     public let keyBindings: String
     public let routing: String
     public let spaces: [OnboardingSpaceSource]
+    var fixturePasswordResults: [OnboardingFixturePasswordResult] = []
     /// The importers that are listed dimmed with "Later" (F-Onboarding screen 2).
     public let laterBrowsers: [String]
 
@@ -46,6 +47,32 @@ public struct OnboardingData: Sendable {
         self.routing = routing
         self.spaces = spaces
         self.laterBrowsers = laterBrowsers
+    }
+}
+
+struct OnboardingFixturePasswordResult: Sendable {
+    enum Outcome: Sendable {
+        case imported(added: Int, existing: Int, conflicts: Int, neverSaved: Int, undecryptable: Int, invalid: Int)
+        case noKey
+        case unsupportedVersion
+    }
+
+    let profile: String
+    let outcome: Outcome
+
+    var reportLines: [OnboardingReportLine] {
+        let id = "passwords-" + profile
+        switch outcome {
+        case let .imported(added, existing, conflicts, neverSaved, undecryptable, invalid):
+            return [
+                .init(id: id, text: "\(profile) passwords: \(added) added, \(existing) existing, \(conflicts) conflicts."),
+                .init(id: id + "-details", text: "\(neverSaved) Never rows skipped, \(undecryptable) unreadable, \(invalid) invalid.")
+            ]
+        case .noKey:
+            return [.init(id: id, text: "\(profile): Access to Arc Safe Storage was not allowed")]
+        case .unsupportedVersion:
+            return [.init(id: id, text: "\(profile): Unsupported Arc password database version")]
+        }
     }
 }
 
@@ -225,9 +252,9 @@ public final class OnboardingModel: NSObject, ObservableObject {
     public var spaceRows: [OnboardingSpaceSource] { data.spaces }
 
     /// What the core importer actually carries (import.rs): favourites, looks, Air Traffic Control
-    /// routes and folder open states. Archive, Sign-in state, Passwords and History have no
-    /// producer and are left out (O4/O5).
+    /// routes and folder open states.
     public var alsoRows: [String] { ["Favourites", "Looks", "Air Traffic Control routes", "Folder open states"] }
+    public var passwordProfileNames: [String] { data.fixturePasswordResults.map(\.profile) }
 
     // MARK: - Navigation
 
@@ -302,7 +329,7 @@ public final class OnboardingModel: NSObject, ObservableObject {
                                                     linkRoutingJson: data.routing, ownerProfile: nil)
             report = result.report
             summary = OnboardingSummary(report: result.report)
-            lines = Self.reportLines(result.report)
+            lines = Self.reportLines(result.report) + data.fixturePasswordResults.flatMap(\.reportLines)
             stage = Self.siblingError(result.report).map { .siblingFile($0) } ?? .done
         } catch {
             stage = .error(Self.errorText(error))

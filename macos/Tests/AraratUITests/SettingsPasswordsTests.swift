@@ -59,6 +59,10 @@ private final class PasswordsFixture: NSObject, ARPasswordsAPI {
     }
     func deleteRow(_ rowID: String) -> Bool { false }
     func revealRow(_ rowID: String, completion: @escaping @MainActor @Sendable (UnsafePointer<unichar>?, UInt) -> Void) { reveal = completion }
+    func checkWriteArcFixture(_ path: String) -> Bool { false }
+    func importArcPasswords(from path: String, completion: @escaping @MainActor @Sendable (ARArcPasswordImportStatus, ARArcPasswordImportCounts) -> Void) {
+        completion(.storeUnavailable, ARArcPasswordImportCounts())
+    }
     func invalidate() { invalidated = true }
 }
 

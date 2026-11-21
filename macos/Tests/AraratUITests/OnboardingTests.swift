@@ -34,6 +34,32 @@ final class FakeSetter: DefaultBrowserSetter {
 }
 
 @Test @MainActor
+func onboardingRendersFixturePasswordProfilesAndReports() throws {
+    let (model, directory) = try onboardingTestModel(OnboardingFixtures.showcaseWithPasswords)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let controller = OnboardingWindowController(model: model)
+    controller.checkRender()
+    model.advance()
+    model.advance()
+    controller.checkRender()
+    let probe = try #require(controller.checkProbe())
+    probe.layout()
+    #expect(probe.alsoRows.last?.text == "Passwords Default, University")
+    model.advance()
+    model.notNow()
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+    probe.render()
+    probe.layout()
+    #expect(probe.reportLines.suffix(3) == [
+        "Default passwords: 2 added, 1 existing, 1 conflicts.",
+        "1 Never rows skipped, 2 unreadable, 0 invalid.",
+        "University: Access to Arc Safe Storage was not allowed",
+    ])
+    #expect(OnboardingFixturePasswordResult(profile: "University", outcome: .unsupportedVersion)
+        .reportLines.map(\.text) == ["University: Unsupported Arc password database version"])
+}
+
+@Test @MainActor
 func theDefaultBrowserSetterRequestsHTTPExactlyOnce() {
     var apps: [URL] = []
     var schemes: [String] = []

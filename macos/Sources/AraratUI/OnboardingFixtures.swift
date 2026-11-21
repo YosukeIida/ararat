@@ -31,6 +31,16 @@ public enum OnboardingFixtures {
         sidebar: showcaseSidebar, windows: showcaseWindows,
         keyBindings: showcaseKeyBindings, routing: showcaseRouting, spaces: spaces)
 
+    public static let showcaseWithPasswords: OnboardingData = {
+        var data = showcase
+        data.fixturePasswordResults = [
+            .init(profile: "Default", outcome: .imported(added: 2, existing: 1, conflicts: 1,
+                                                        neverSaved: 1, undecryptable: 2, invalid: 0)),
+            .init(profile: "University", outcome: .noKey),
+        ]
+        return data
+    }()
+
     /// The malformed-sidebar fixture: valid JSON whose containers carry no `spaces`, which the
     /// core refuses with `ImportError("sidebar.containers has no container with spaces")`.
     public static let malformedSidebar = OnboardingData(

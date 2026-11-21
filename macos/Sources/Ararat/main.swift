@@ -588,6 +588,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var openingExternalURL = false
   var atcRoutingCheck: ATCRoutingCheck?
   var passwordsStoreCheck: PasswordsStoreCheck?
+  var arcPasswordImportCheck: ArcPasswordImportCheck?
   var passwordPromptCheck: PasswordPromptCheck?
 
   enum ExternalDestination: Equatable {
@@ -1195,18 +1196,20 @@ final class Runtime: NSObject, NSMenuItemValidation {
 
   func start(session: WorkspaceSession? = nil, shownSpace: String? = nil, reopening: Bool = false, privateProfile: String? = nil, restoringWindow: KeptWindow? = nil) throws {
     let arguments = CommandLine.arguments
-    let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let guardedOptions = PasswordsStoreCheck.guardOptions(arguments)
+    let arcPasswordImport = guardedOptions.contains("--ararat-check=" + ArcPasswordImportCheck.mode)
+    let checkName = arcPasswordImport ? ArcPasswordImportCheck.mode
+      : arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let passwordPromptScreen = session == nil && guardedOptions.contains("--ararat-screen=password-prompt")
     let passwordsTouchIDScreen = session == nil && guardedOptions.contains("--ararat-screen=passwords-touch-id")
     let screenName = guardedOptions.first(where: {
       $0 == "--ararat-screen=password-prompt" || $0 == "--ararat-screen=passwords-real-auth" || $0 == "--ararat-screen=passwords-touch-id"
     }).map { String($0.dropFirst(16)) }
       ?? arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "passwords", "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live", "atc-routing"].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "passwords", ArcPasswordImportCheck.mode, "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live", "atc-routing"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["atc-routing", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "passwords", "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live"].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["atc-routing", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "passwords", ArcPasswordImportCheck.mode, "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live"].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "download-close" { browserCheckMode = checkName }
       if checkName == "errorpages" { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
@@ -3630,6 +3633,21 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
           ["error": promptFixtureError ?? "timeout"]) { _, new in new })
       } else if let host {
         check.tick(self, host: host)
+      }
+      return
+    }
+    if mode == ArcPasswordImportCheck.mode {
+      browserCheckAttempts += 1
+      if browserCheckAttempts > 120 {
+        if let check = arcPasswordImportCheck { check.timeOut() }
+        else { finishBrowserCheck(ok: false, values: ["check": mode, "conditions": ["store_opened": false]]) }
+      } else if let host, !isPrivateWindow {
+        if arcPasswordImportCheck == nil, let handle = passwordsHandle(profile: host.profileDirectory()) {
+          arcPasswordImportCheck = ArcPasswordImportCheck(handle: handle) { [weak self] passed, values in
+            self?.finishBrowserCheck(ok: passed, values: values)
+          }
+        }
+        arcPasswordImportCheck?.tick()
       }
       return
     }
