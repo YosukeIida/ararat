@@ -129,6 +129,14 @@ func aSettingsScreenArgumentReachesItsModeAndBackThroughTheCheckMode() {
     #expect(SettingsScreenCheck.Mode.passwords.paneID == "passwords")
     #expect(SettingsScreenCheck.Mode.screenMode("passwords-real-auth") == .passwordsRealAuth)
     #expect(SettingsScreenCheck.Mode.passwordsRealAuth.paneID == "passwords")
+    #expect(SettingsScreenCheck.conditionNames(.passwordsRealAuth).contains("touch_id_hook_off"))
+    #expect(SettingsScreenCheck.Mode.screenMode("passwords-touch-id") == .passwordsTouchID)
+    #expect(SettingsScreenCheck.Mode.passwordsTouchID.paneID == "passwords")
+    #expect(SettingsScreenCheck.conditionNames(.passwordsTouchID).suffix(11) == [
+        "fake_auth_off", "list_fixture", "fill_switch_visible", "failure_keeps_locked",
+        "unresolved_keeps_locked", "cancel_keeps_locked", "success_unlocks", "fill_fixture",
+        "fill_refusal", "fill_success", "capture",
+    ])
     #expect(SettingsScreenCheck.conditionNames(.passwords).suffix(7) == [
         "fake_auth", "fixtures", "locked", "search", "detail", "discard_password_edit", "capture",
     ])

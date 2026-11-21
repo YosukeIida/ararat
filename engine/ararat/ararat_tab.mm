@@ -9,6 +9,12 @@
 #include "ararat/core/ararat_autofill_bubble_handler.h"
 #include "ararat/core/ararat_password_prompt.h"
 #include "ararat/core/ararat_window_host.h"
+#if defined(ARARAT_TOUCH_ID_CHECK)
+#include "ararat/core/ararat_touch_id_check.h"
+#include "chrome/browser/ui/autofill/autofill_suggestion_controller.h"
+#include "chrome/browser/ui/autofill/chrome_autofill_client.h"
+#include "components/autofill/core/browser/suggestions/suggestion_type.h"
+#endif
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/functional/callback.h"
@@ -493,6 +499,60 @@ static bool IsPasswordLoginFixture(content::WebContents* contents) {
   return url.SchemeIs("http") && url.host() == "127.0.0.1" &&
          url.path() == "/password-login";
 }
+
+#if defined(ARARAT_TOUCH_ID_CHECK)
+static bool IsTouchIDLoginFixture(content::WebContents* contents,
+                                  NSString* expected_url) {
+  if (!contents ||
+      !AraratTouchIDCheckHasProfile(
+          Profile::FromBrowserContext(contents->GetBrowserContext())))
+    return false;
+  const auto& url = contents->GetLastCommittedURL();
+  return url.SchemeIs("http") && url.host() == "127.0.0.1" &&
+         url.path() == "/password-login" &&
+         url.spec() == base::SysNSStringToUTF8(expected_url);
+}
+
+- (BOOL)checkTouchIDFixture:(NSString*)url
+                      focus:(BOOL)focus
+                 completion:(void (^)(NSString*))completion {
+  if (!IsTouchIDLoginFixture(contents_, url))
+    return NO;
+  const char16_t* script = focus
+      ? u"(() => { document.getElementById('username')?.focus(); "
+        u"return document.activeElement?.id === 'username' ? "
+        u"JSON.stringify([document.getElementById('username')?.value, "
+        u"document.getElementById('password')?.value]) : ''; })()"
+      : u"JSON.stringify([document.getElementById('username')?.value, "
+        u"document.getElementById('password')?.value])";
+  contents_->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
+      script, base::BindOnce(^(base::Value value) {
+        completion(value.is_string() ? base::SysUTF8ToNSString(value.GetString())
+                                     : @"");
+      }), ISOLATED_WORLD_ID_CHROME_INTERNAL);
+  return YES;
+}
+
+- (BOOL)checkTouchIDPasswordSuggestion:(NSString*)url accept:(BOOL)accept {
+  if (!IsTouchIDLoginFixture(contents_, url))
+    return NO;
+  auto* client =
+      autofill::ChromeAutofillClient::FromWebContentsForTesting(contents_);
+  auto popup = client ? client->suggestion_controller_for_testing() : nullptr;
+  if (!popup)
+    return NO;
+  const auto suggestions = popup->GetSuggestions();
+  if (suggestions.empty() ||
+      suggestions.front().type != autofill::SuggestionType::kPasswordEntry)
+    return NO;
+  if (accept) {
+    popup->AcceptSuggestion(
+        0, autofill::AutofillMetrics::SuggestionAcceptedMethod::kKeyboard,
+        /*was_obscured=*/false);
+  }
+  return YES;
+}
+#endif
 
 - (BOOL)checkFillPasswordFixture:(void (^)(NSString*))completion {
   if (!IsPasswordLoginFixture(contents_)) return NO;

@@ -49,3 +49,4 @@ ararat/native-editor-ime.patch
 ararat/password-manager.patch
 ararat/password-prompt.patch
 ararat/password-prompt-trace.patch
+ararat/passwords-touch-id-check.patch

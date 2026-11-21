@@ -68,6 +68,7 @@ public final class SettingsCheckProbe: NSObject {
 
     public func refreshPasswordPreferences() { model.passwords.objectWillChange.send() }
     public func unlockPasswords() { model.passwords.unlock() }
+    public func lockPasswordsForCheck() { model.passwords.lock() }
     public func searchPasswords(_ query: String) { model.passwords.query = query }
 
     public func revealPassword(for website: String) {
