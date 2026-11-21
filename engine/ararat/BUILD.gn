@@ -56,6 +56,29 @@ test("history_files_unittests") {
   ]
 }
 
+source_set("arc_login_data") {
+  sources = [ "ararat_arc_login_data.cc", "ararat_arc_login_data.h" ]
+  deps = [
+    "//base",
+    "//crypto",
+    "//sql",
+    "//third_party/boringssl",
+  ]
+}
+
+test("arc_login_data_unittests") {
+  sources = [ "ararat_arc_login_data_unittest.cc" ]
+  deps = [
+    ":arc_login_data",
+    "//base",
+    "//base/test:run_all_unittests",
+    "//base/test:test_support",
+    "//sql",
+    "//sql:test_support",
+    "//testing/gtest",
+  ]
+}
+
 source_set("passwords") {
   sources = [ "ararat_passwords.h", "ararat_passwords.mm" ]
   public = [ "ararat_passwords.h", "public/AraratHostAPI.h" ]
