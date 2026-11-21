@@ -12,6 +12,7 @@
 # exports our symbols on the same link line as chrome's framework.exports.
 
 import("//testing/test.gni")
+import("//ararat/core/ararat_touch_id_check.gni")
 
 declare_args() {
   # Written by engine/scripts/gen; empty means gen has not run for this tree.
@@ -78,6 +79,31 @@ source_set("passwords") {
     "//crypto",
     "//url",
   ]
+  if (ararat_touch_id_check) {
+    deps += [ ":touch_id_check" ]
+    defines = [ "ARARAT_TOUCH_ID_CHECK" ]
+  }
+}
+
+if (ararat_touch_id_check) {
+  source_set("touch_id_check") {
+    sources = [
+      "ararat_touch_id_check.h",
+      "ararat_touch_id_check.mm",
+      "public/AraratHostAPI.h",
+    ]
+    deps = [
+      "//base",
+      "//chrome/browser/device_reauth",
+      "//chrome/browser/profiles:profile",
+      "//chrome/common:constants",
+      "//components/device_reauth",
+      "//components/password_manager/core/common",
+      "//components/prefs",
+      "//content/public/browser",
+      "//device/fido:touch_id_test_support",
+    ]
+  }
 }
 
 source_set("passwords_unit_tests") {
@@ -291,4 +317,8 @@ source_set("entry") {
     "//net",
     "//services/network/public/mojom:cookies_mojom",
   ]
+  if (ararat_touch_id_check) {
+    deps += [ ":touch_id_check" ]
+    defines = [ "ARARAT_TOUCH_ID_CHECK" ]
+  }
 }

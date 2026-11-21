@@ -56,6 +56,8 @@ extension Runtime {
             guard probe.passwordsLocked, probe.marker("passwords-unlock")?.isEmpty == false else { return }
             guard !handle.checkUsesFakeAuthentication else { end("fake_auth_off", false); return }
             check.report("fake_auth_off", true)
+            guard handle.checkTouchIDWasActivated != true else { end("touch_id_hook_off", false); return }
+            check.report("touch_id_hook_off", true)
             guard hidden() else { end("fill_switch_hidden", false); return }
             check.report("fill_switch_hidden", true)
             if let added = check.conditions["fixtures"] {

@@ -5,7 +5,7 @@ import AraratEngineAPI
 final class PasswordsStoreCheck {
     private nonisolated static let modes: Set<String> = [
         "--ararat-check=passwords", "--ararat-screen=settings-passwords", "--ararat-screen=password-prompt",
-        "--ararat-screen=passwords-real-auth",
+        "--ararat-screen=passwords-real-auth", "--ararat-screen=passwords-touch-id",
     ]
 
     nonisolated static func guardOptions(_ arguments: [String]) -> [String] {
@@ -25,7 +25,7 @@ final class PasswordsStoreCheck {
         let roots = [NSTemporaryDirectory(), "/tmp"].map {
             URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/"
         }
-        let selected = args.filter { $0.hasPrefix("--ararat-check") || $0.hasPrefix("--ararat-screen") }
+        let selected = args.filter { $0.hasPrefix("--ararat-check") || $0.hasPrefix("--ararat-screen") || $0.hasPrefix("--ararat-measure") }
         return !args.contains("--") && selected.count == 1 && selected.contains(where: modes.contains)
             && !(selected.contains("--ararat-screen=password-prompt")
                 && args.contains(where: { $0 == "--enable-automation" || $0.hasPrefix("--enable-automation=") }))

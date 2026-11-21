@@ -16,6 +16,9 @@
 #include "ararat/core/ararat_passwords.h"
 #include "ararat/core/ararat_permission_prompt.h"
 #include "ararat/core/ararat_tab_history.h"
+#if defined(ARARAT_TOUCH_ID_CHECK)
+#include "ararat/core/ararat_touch_id_check.h"
+#endif
 #include "ararat/core/ararat_window_check.h"
 #include "ararat/core/ararat_window_host.h"
 #include "base/command_line.h"
@@ -266,6 +269,14 @@ void CheckGuards(int argc, const char** argv) {
   bool check_toasts = false;
   bool screen_toasts = false;
   bool screen_private = false;
+  bool screen_passwords_touch_id = false;
+#if defined(ARARAT_TOUCH_ID_CHECK)
+  unsigned check_options = 0;
+  unsigned user_data_dirs = 0;
+  unsigned databases = 0;
+  std::string profile_arg;
+  std::string workspace_arg;
+#endif
   for (int i = 1; i < argc; ++i) {
     std::string option(base::TrimWhitespaceASCII(argv[i] ? argv[i] : "",
                                                  base::TRIM_ALL));
@@ -286,6 +297,16 @@ void CheckGuards(int argc, const char** argv) {
       continue;
     }
     const char* arg = option.c_str();
+#if defined(ARARAT_TOUCH_ID_CHECK)
+    if (option.starts_with("--ararat-check") ||
+        option.starts_with("--ararat-screen") ||
+        option.starts_with("--ararat-measure"))
+      ++check_options;
+    if (option == "--user-data-dir" || option.starts_with("--user-data-dir="))
+      ++user_data_dirs;
+    if (option == "--ararat-db" || option.starts_with("--ararat-db="))
+      ++databases;
+#endif
     if (strncmp(arg, "--disable-features", 18) == 0) ++disable_features_count;
     if (strncmp(arg, "--ararat-compositor=", 20) == 0) {
       std::string_view compositor(arg + 20);
@@ -318,6 +339,11 @@ void CheckGuards(int argc, const char** argv) {
       if (std::string_view(arg + 16) == "errorpages") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "dialogs") { valid_screen = true; g_check_slice = true; }
       if (std::string_view(arg + 16) == "password-prompt") { valid_screen = true; g_check_slice = true; }
+      if (std::string_view(arg + 16) == "passwords-touch-id") {
+        screen_passwords_touch_id = true;
+        valid_screen = true;
+        g_check_slice = true;
+      }
       if (screen_downloads) { valid_screen = true; g_check_slice = true; }
       if (screen_toasts) { valid_screen = true; g_check_slice = true; }
       if (screen_private) { valid_screen = true; g_check_slice = true; }
@@ -400,6 +426,9 @@ void CheckGuards(int argc, const char** argv) {
       // Why not require g_slice_passed: DevTools validates after ChromeMain returns.
       g_check_slice = g_check_slice || (browser_check && !check_devtools);
     } else if (strncmp(arg, "--user-data-dir=", 16) == 0) {
+#if defined(ARARAT_TOUCH_ID_CHECK)
+      profile_arg = arg + 16;
+#endif
       base::FilePath dir(std::string(arg + 16));
       under_temp = !temp_dir.empty() && !dir.empty() && !dir.ReferencesParent()
           && base::FilePath(temp_dir).IsParent(dir);
@@ -412,6 +441,9 @@ void CheckGuards(int argc, const char** argv) {
     } else if (strncmp(arg, "--enable-features", 17) == 0) {
       enable_features = true;
     } else if (strncmp(arg, "--ararat-db=", 12) == 0) {
+#if defined(ARARAT_TOUCH_ID_CHECK)
+      workspace_arg = arg + 12;
+#endif
       base::FilePath db(std::string(arg + 12));
       db_under_temp = !temp_dir.empty() && !db.empty() &&
                       !db.ReferencesParent() && base::FilePath(temp_dir).IsParent(db);
@@ -442,6 +474,18 @@ void CheckGuards(int argc, const char** argv) {
   if (bare_check) {
     refuse("the switch needs a =name");
   }
+  if (screen_passwords_touch_id) {
+#if defined(ARARAT_TOUCH_ID_CHECK)
+    if (check_options != 1 || user_data_dirs != 1 || databases != 1 ||
+        option_terminator || !mock_keychain ||
+        !AraratConfigureTouchIDCheck(base::SysUTF8ToNSString(profile_arg),
+                                     base::SysUTF8ToNSString(workspace_arg))) {
+      refuse("passwords-touch-id requires one scratch profile and database, and mock Keychain");
+    }
+#else
+    refuse("passwords-touch-id requires the dev check build");
+#endif
+  }
   if ((check_downloads || screen_downloads || check_toasts || screen_toasts) && (!disable_system_notifications || disable_features_count != 1 || enable_features || option_terminator)) {
     refuse("downloads and toasts checks require --disable-features=SystemNotifications and no --enable-features");
   }
@@ -449,8 +493,9 @@ void CheckGuards(int argc, const char** argv) {
     std::cerr << "engine: --ararat-measure requires a scenario, scratch profile and mock keychain" << std::endl;
     exit(2);
   }
-  if (has_screen && (!valid_screen || has_check || has_measure || temp_dir.empty() ||
-                     !under_temp || !mock_keychain || !db_under_temp)) {
+  if (has_screen && !screen_passwords_touch_id &&
+      (!valid_screen || has_check || has_measure || temp_dir.empty() ||
+       !under_temp || !mock_keychain || !db_under_temp)) {
     std::cerr << "engine: --ararat-screen requires a scenario, scratch profile and database, and mock keychain" << std::endl;
     if (screen_prompts)
       std::cout << "{\"screen\":\"prompts\",\"check\":\"prompts\",\"ok\":false,\"error\":\"invalid arguments\",\"exit\":2}" << std::endl;
@@ -593,6 +638,9 @@ __attribute__((visibility("default"))) int AraratMain(int argc, const char** arg
   int browser_argc = static_cast<int>(browser_args.size());
   browser_args.push_back(nullptr);
   int result = ChromeMain(browser_argc, browser_args.data());
+#if defined(ARARAT_TOUCH_ID_CHECK)
+  AraratFinishTouchIDCheck();
+#endif
   if (TraceTeardown()) std::fprintf(stderr, "ararat-teardown: ChromeMain returned=%d\n", result);
   return result == 0 && (!AraratCheckDialogIntegrity() || !AraratWindowCheckPassed() || (g_check_tabs && !AraratTabsCheckPassed()) || (g_check_split && !AraratSplitCheckPassed()) || (g_check_transfer && !AraratTransferCheckPassed()) ||
                          (g_check_slice && !g_slice_passed)) ? 1 : result;

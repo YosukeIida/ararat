@@ -821,6 +821,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var lookCheck: LookScreenCheck?
   var sidebarCheck: SidebarCheck?
   var settingsCheck: SettingsScreenCheck?
+  lazy var passwordsTouchID = SettingsPasswordsTouchIDCheck()
   // P5b: the General check's fake default-browser pair (status and setter), so the row's Make
   // Default is asserted without touching the host's handler.
   var generalDefaultBrowser: GeneralCheckDefaultBrowser?
@@ -1197,8 +1198,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let guardedOptions = PasswordsStoreCheck.guardOptions(arguments)
     let passwordPromptScreen = session == nil && guardedOptions.contains("--ararat-screen=password-prompt")
+    let passwordsTouchIDScreen = session == nil && guardedOptions.contains("--ararat-screen=passwords-touch-id")
     let screenName = guardedOptions.first(where: {
-      $0 == "--ararat-screen=password-prompt" || $0 == "--ararat-screen=passwords-real-auth"
+      $0 == "--ararat-screen=password-prompt" || $0 == "--ararat-screen=passwords-real-auth" || $0 == "--ararat-screen=passwords-touch-id"
     }).map { String($0.dropFirst(16)) }
       ?? arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
     if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "passwords", "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live", "atc-routing"].contains(checkName) { return }
@@ -1252,7 +1254,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       // U27a: one launch per settings pane, plus the frame and the search. The argument
       // (`settings-tabs`) becomes the check mode every family uses (`screen-settings-tabs`).
       if let screenName, let mode = SettingsScreenCheck.Mode.screenMode(screenName) { browserCheckMode = mode.checkMode }
-      if passwordPromptScreen || ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header", "urlfield", "private-downloads", "little-window", "folder-upload"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "tab-switcher" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" || screenName == "urlfield" || screenName == "little-window" || screenName == "folder-upload" {
+      if passwordsTouchIDScreen || passwordPromptScreen || ["permissions", "dialogs", "protocol", "autofill", "keyboard", "commandbar", "downloads", "download-close", "errorpages", "toasts", "split-focus", "split-commands", "sidebar-rows", "header", "urlfield", "private-downloads", "little-window", "folder-upload"].contains(checkName ?? "") || screenName == "prompts" || screenName == "dialogs" || screenName == "keyboard" || screenName == "commandbar" || screenName == "tab-switcher" || screenName == "downloads" || screenName == "errorpages" || screenName == "toasts" || screenName == "sidebar-rows" || screenName == "split-focus" || screenName == "split-commands" || screenName == "header" || screenName == "urlfield" || screenName == "little-window" || screenName == "folder-upload" {
         let fixture = try PromptFixtureServer(tracePasswordPrompt: passwordPromptScreen)
         promptFixture = fixture
         fixture.start { [weak self] result in
@@ -1296,7 +1298,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     typealias UserData = @convention(c) () -> UnsafeMutableRawPointer?
     let userData = unsafeBitCast(pathSymbol, to: UserData.self)
-    let requested = (passwordPromptScreen ? guardedOptions : arguments)
+    let requested = (passwordPromptScreen || passwordsTouchIDScreen ? guardedOptions : arguments)
       .first { $0.hasPrefix("--ararat-db=") }.map { String($0.dropFirst(12)) }
     let organize = browserCheckMode == "organize" || browserCheckMode == "screen-organize"
     let wheelMotionCheckActive = browserCheckMode == "screen-space-wheel-motion"
@@ -1382,6 +1384,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     // U27x's Extensions check seeds the same two profiles as Websites, not the three spaces: its
     // chooser switches between them (X1).
     let extensionCheckActive = browserCheckMode == "screen-settings-extensions"
+    let twoProfileSettingsCheck = websitesCheckActive || extensionCheckActive || passwordsTouchIDScreen
     // U27j: the onboarding flow imports Arc into the check's db itself, so the window starts with
     // an empty workspace and no seed of any kind.
     let onboardingCheckActive = ["onboarding", "screen-onboarding"].contains(browserCheckMode ?? "")
@@ -1390,7 +1393,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let profileURL = ["ext-windows", "screen-profiles"].contains(browserCheckMode ?? "")
       ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : "about:blank"
     let extensionPopupCheck = ["ext-popup", "ext-windows-popup", "screen-extensions"].contains(browserCheckMode ?? "")
-    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !wheelMotionCheckActive && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && !settingsCheckActive && !onboardingCheckActive && browserCheckMode != "little-window" && browserCheckMode != "screen-little-window", seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify" && browserCheckMode != "private-durability-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedSplitCommands: check && (browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands"), seedToastSplit: check && (browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, seedLittleWindow: check && (browserCheckMode == "little-window" || browserCheckMode == "screen-little-window"), seedSettings: check && settingsCheckActive && !websitesCheckActive && !extensionCheckActive, seedWebsites: check && (websitesCheckActive || extensionCheckActive), profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", private: isPrivateWindow, session: running)
+    let adapter = try EngineAdapter(path: path, windowID: windowID, card: card, seedCheck: check && !wheelMotionCheckActive && !singleCheck && !profileCheck && !organize && !dockCheckMode && !sidebarCheckActive && !settingsCheckActive && !onboardingCheckActive && browserCheckMode != "little-window" && browserCheckMode != "screen-little-window", seedSingleCheck: check && singleCheck && !linkCheck && browserCheckMode != "relaunch-verify" && browserCheckMode != "private-durability-verify", seedLinkCheck: check && linkCheck, seedProfiles: check && profileCheck, seedSplitCheck: check && profileCheck && (arguments.contains("--ararat-split-close-check") || browserCheckMode == "screen-dialogs"), seedSplitCommands: check && (browserCheckMode == "split-commands" || browserCheckMode == "screen-split-commands"), seedToastSplit: check && (browserCheckMode == "toasts" || browserCheckMode == "screen-toasts" || browserCheckMode == "split-focus" || browserCheckMode == "screen-split-focus"), seedOrganize: check && organize, seedDock: check && dockCheckMode, seedSidebar: check && sidebarCheckActive, seedLittleWindow: check && (browserCheckMode == "little-window" || browserCheckMode == "screen-little-window"), seedSettings: check && settingsCheckActive && !twoProfileSettingsCheck, seedWebsites: check && twoProfileSettingsCheck, profileCheckURL: profileURL, singleCheckURL: extensionPopupCheck ? "chrome-extension://kmgaadhbnkendcanjninlfmfgehagggl/probe.html" : nil, requireExisting: browserCheckMode == "relaunch-verify", private: isPrivateWindow, session: running)
     if check && ["screen-dialogs", "downloads", "screen-downloads"].contains(browserCheckMode ?? "") {
       let seeded = adapter.session.queue.sync { adapter.session.store?.snapshot(windowId: windowID) }
       let rows = seeded?.spaces.map { space in
@@ -10486,7 +10489,9 @@ typealias AraratMain = @convention(c) (
   UnsafeRawPointer?
 ) -> Int32
 let araratMain = unsafeBitCast(symbol, to: AraratMain.self)
-if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") }) {
+let touchIDScreenArgument = "--ararat-screen=passwords-touch-id"
+if let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") })
+    ?? PasswordsStoreCheck.guardOptions(CommandLine.arguments).first(where: { $0 == touchIDScreenArgument }) {
   let screen = argument.hasPrefix("--ararat-screen=")
   let name = String(argument.dropFirst(screen ? 16 : 15))
   let watchdogSeconds = ["atc-routing", "keyboard", "errorpages", "downloads", "toasts", "private-window", "screen-private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "split-focus", "split-commands", "urlfield", "screen-urlfield", "header", "site-controls", "ext-actions", "password-prompt"].contains(name) ? 120 : 60

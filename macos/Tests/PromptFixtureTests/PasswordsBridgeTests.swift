@@ -79,7 +79,7 @@ struct PasswordsBridgeTests {
 
     @Test func passwordsGuardRecognizesBothChromiumSwitchPrefixes() {
         for mode in ["ararat-check=passwords", "ararat-screen=settings-passwords", "ararat-screen=password-prompt",
-                     "ararat-screen=passwords-real-auth"] {
+                     "ararat-screen=passwords-real-auth", "ararat-screen=passwords-touch-id"] {
             for prefix in ["-", "--"] {
                 let launch = ["Ararat", prefix + mode, prefix + "use-mock-keychain"]
                 #expect(PasswordsStoreCheck.requiresScratchGuard(launch))
@@ -92,6 +92,17 @@ struct PasswordsBridgeTests {
                     #expect(!PasswordsStoreCheck.validArguments(scratch + [prefix + "enable-automation"]))
                 }
                 #expect(!PasswordsStoreCheck.validArguments(scratch + ["-user-data-dir=/Users/example/Profile"]))
+                if mode == "ararat-screen=passwords-touch-id" {
+                    #expect(!PasswordsStoreCheck.validArguments(scratch.filter { $0 != prefix + "use-mock-keychain" }))
+                    #expect(!PasswordsStoreCheck.validArguments(scratch + [prefix + "ararat-measure=switch"]))
+                    #expect(!PasswordsStoreCheck.validArguments(scratch + [prefix + "ararat-db"]))
+                    #expect(!PasswordsStoreCheck.validArguments(scratch.map {
+                        $0.hasPrefix(prefix + "ararat-db=") ? prefix + "ararat-db=/Users/example/workspace" : $0
+                    }))
+                    #expect(!PasswordsStoreCheck.validArguments(scratch.map {
+                        $0.hasPrefix(prefix + "user-data-dir=") ? prefix + "user-data-dir=/Users/example/Profile" : $0
+                    }))
+                }
                 let afterTerminator = ["Ararat", "--", prefix + mode]
                 #expect(PasswordsStoreCheck.requiresScratchGuard(afterTerminator))
                 #expect(!PasswordsStoreCheck.validArguments(afterTerminator))

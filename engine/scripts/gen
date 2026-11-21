@@ -58,6 +58,7 @@ use_thin_lto=false
 symbol_level=0
 blink_symbol_level=0
 dcheck_always_on=false
+ararat_touch_id_check=true
 # base's precompile.h is compiled as a module interface unit under this toolchain and fails
 enable_precompiled_headers=false
 DEV_ARGS

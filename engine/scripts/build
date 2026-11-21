@@ -66,6 +66,20 @@ if [[ $rc -ne 0 ]]; then
   die "autoninja failed (exit $rc); log at $log"
 fi
 
+if [[ $out_name == Ararat ]]; then
+  framework="$ARARAT_SRC_DIR/out/$out_name/obj/chrome/chrome_framework_shared_library/Chromium Framework"
+  if ! /usr/bin/nm -a "$framework" | /usr/bin/awk '
+    $NF == "_AraratMain" { browser_entry = 1 }
+    /Ararat.*TouchID|g_ararat_touch_id_authenticator|ScopedTouchIdTestEnvironment|FakeTouchIdContext|check.*TouchID/ {
+      print
+      found = 1
+    }
+    END { exit (!browser_entry || found) }
+  '; then
+    die "could not verify that Touch ID check symbols are absent from the unstripped release framework"
+  fi
+fi
+
 step_line="$(grep -oE '^\[[0-9,]+(/[0-9,]+)?\]' "$log" | tail -n1 || true)"
 steps="${step_line#[}"
 steps="${steps%%[,/]*}"

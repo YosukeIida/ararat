@@ -1,4 +1,7 @@
 #import "ararat/core/ararat_passwords.h"
+#if defined(ARARAT_TOUCH_ID_CHECK)
+#include "ararat/core/ararat_touch_id_check.h"
+#endif
 
 #include <cstdlib>
 #include <map>
@@ -213,6 +216,28 @@ bool IsScratchPasswordProfile(const base::FilePath& path) {
   return local_state &&
          local_state->GetBoolean(password_manager::prefs::kHadBiometricsAvailable);
 }
+
+#if defined(ARARAT_TOUCH_ID_CHECK)
+- (BOOL)checkTouchIDWasActivated {
+  return AraratTouchIDCheckWasActivated();
+}
+
+- (BOOL)checkTouchIDConsumedPrompt {
+  return AraratTouchIDCheckConsumedPrompt(profile_);
+}
+
+- (BOOL)checkStartTouchID {
+  return AraratStartTouchIDCheck(profile_);
+}
+
+- (BOOL)checkArmTouchID:(ARTouchIDCheckOutcome)outcome {
+  return AraratArmTouchIDCheck(profile_, outcome);
+}
+
+- (BOOL)checkEnableTouchIDFillPreference {
+  return AraratEnableTouchIDCheckFillPreference(profile_);
+}
+#endif
 
 - (void)setAuthenticatesBeforeFilling:(BOOL)enabled
                           completion:(void (^)(BOOL))completion {

@@ -25,6 +25,7 @@ final class SettingsScreenCheck {
         case websites = "settings-websites"
         case passwords = "settings-passwords"
         case passwordsRealAuth = "passwords-real-auth"
+        case passwordsTouchID = "passwords-touch-id"
         case privacy = "settings-privacy"
         case extensions = "settings-extensions"
         case about = "settings-about"
@@ -36,7 +37,7 @@ final class SettingsScreenCheck {
             case .frame, .search, .tabs, .toolbar: "tabs"
             case .shortcuts, .airTraffic, .appearance, .spaces, .websites, .passwords, .privacy, .general, .about: String(rawValue.dropFirst("settings-".count))
             case .littleWindow: "little-window"
-            case .passwordsRealAuth: "passwords"
+            case .passwordsRealAuth, .passwordsTouchID: "passwords"
             case .extensions: "extensions"
             }
         }
@@ -62,8 +63,12 @@ final class SettingsScreenCheck {
             case .tabs, .about: ["rows"]
             case .passwords: ["fake_auth", "fixtures", "locked", "search", "detail", "discard_password_edit"]
             case .passwordsRealAuth:
-                ["fake_auth_off", "fixtures", "fill_switch_hidden", "system_prompt_shown",
+                ["fake_auth_off", "touch_id_hook_off", "fixtures", "fill_switch_hidden", "system_prompt_shown",
                  "cancel_keeps_locked", "password_unlocks"]
+            case .passwordsTouchID:
+                ["fake_auth_off", "list_fixture", "fill_switch_visible", "failure_keeps_locked",
+                 "unresolved_keeps_locked", "cancel_keeps_locked", "success_unlocks",
+                 "fill_fixture", "fill_refusal", "fill_success"]
             case .airTraffic: ["rows"] + SettingsATCInput.conditions
             case .shortcuts: ["rows", "record_button_pressed", "recorder_opened", "key_recorded", "menu_updated", "sidebar_updated",
                               "keyboard_pressed", "keyboard_toggled", "recorder_restored"]
@@ -459,6 +464,9 @@ extension Runtime {
             settingsSearchTick(probe, check: check, note: note, trace: trace, step: step, end: end, finish: finish, capture: capture, near: near)
         case .passwords:
             settingsPasswordsTick(probe, check: check, note: note, step: step, end: end, finish: finish, capture: capture)
+        case .passwordsTouchID:
+            passwordsTouchID.tick(self, probe: probe, check: check, note: note, step: step,
+                                  end: end, finish: finish, capture: capture)
         case .passwordsRealAuth:
             settingsPasswordsRealAuthTick(probe, check: check, note: note, step: step, end: end, finish: finish)
         case .tabs, .shortcuts, .spaces, .appearance, .littleWindow, .websites, .general, .privacy, .extensions, .toolbar, .about:
@@ -788,7 +796,7 @@ extension Runtime {
                 return
             // The frame and search modes have their own phase machines, and the appearance pane
             // has its own below; leaving them here keeps the pane switch total.
-            case .frame, .search, .appearance, .littleWindow, .websites, .passwords, .passwordsRealAuth, .general, .privacy, .extensions:
+            case .frame, .search, .appearance, .littleWindow, .websites, .passwords, .passwordsRealAuth, .passwordsTouchID, .general, .privacy, .extensions:
                 return
             }
             guard capture(mode == .about ? "about" : mode.rawValue) else { end("capture", false); return }

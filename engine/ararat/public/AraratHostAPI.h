@@ -11,6 +11,12 @@ typedef NS_ENUM(NSInteger, ARPasswordsState) {
   ARPasswordsStateFailed,
 };
 
+typedef NS_ENUM(NSInteger, ARTouchIDCheckOutcome) {
+  ARTouchIDCheckOutcomeSuccess,
+  ARTouchIDCheckOutcomeFailure,
+  ARTouchIDCheckOutcomeUnresolved,
+};
+
 @protocol ARPasswordRowAPI <NSObject>
 @property(nonatomic, readonly, copy) NSString* rowID;
 @property(nonatomic, readonly, copy) NSString* website;
@@ -41,6 +47,12 @@ NS_SWIFT_MAIN_ACTOR
 - (void)revealRow:(NSString*)rowID
        completion:(void (NS_SWIFT_MAIN_ACTOR ^)(const unichar* _Nullable password, NSUInteger length))completion NS_SWIFT_DISABLE_ASYNC;
 - (void)invalidate;
+@optional
+@property(nonatomic, readonly) BOOL checkTouchIDWasActivated;
+@property(nonatomic, readonly) BOOL checkTouchIDConsumedPrompt;
+- (BOOL)checkStartTouchID;
+- (BOOL)checkArmTouchID:(ARTouchIDCheckOutcome)outcome;
+- (BOOL)checkEnableTouchIDFillPreference;
 @end
 
 typedef struct {
@@ -134,6 +146,11 @@ typedef struct {
 - (BOOL)checkHoldFindReply:(NSString*)text;
 - (BOOL)checkHeldFindTargetAlive;
 - (NSDictionary<NSString*, id>*)checkDeliverHeldFindReply;
+@optional
+- (BOOL)checkTouchIDFixture:(NSString*)url
+                      focus:(BOOL)focus
+                 completion:(void (NS_SWIFT_MAIN_ACTOR ^)(NSString*))completion;
+- (BOOL)checkTouchIDPasswordSuggestion:(NSString*)url accept:(BOOL)accept;
 @end
 
 @protocol ARWindowHostAPI;

@@ -1,0 +1,6 @@
+declare_args() {
+  ararat_touch_id_check = false
+}
+
+assert(!ararat_touch_id_check || !is_official_build,
+       "The simulated Touch ID check is for dev builds only.")
