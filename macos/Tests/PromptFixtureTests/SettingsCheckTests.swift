@@ -127,6 +127,8 @@ func aSettingsScreenArgumentReachesItsModeAndBackThroughTheCheckMode() {
     #expect(SettingsScreenCheck.Mode.screenMode("settings-about") == .about)
     #expect(SettingsScreenCheck.Mode.screenMode("settings-passwords") == .passwords)
     #expect(SettingsScreenCheck.Mode.passwords.paneID == "passwords")
+    #expect(SettingsScreenCheck.Mode.screenMode("passwords-real-auth") == .passwordsRealAuth)
+    #expect(SettingsScreenCheck.Mode.passwordsRealAuth.paneID == "passwords")
     #expect(SettingsScreenCheck.conditionNames(.passwords).suffix(6) == ["fake_auth", "fixtures", "locked", "search", "detail", "capture"])
     #expect(SettingsScreenCheck.Mode.about.paneID == "about")
     #expect(SettingsScreenCheck.conditionNames(.about).suffix(2) == ["rows", "capture"])
@@ -154,4 +156,16 @@ func aSettingsScreenArgumentReachesItsModeAndBackThroughTheCheckMode() {
     #expect(SettingsScreenCheck.Mode.mode("screen-header") == nil)
     #expect(SettingsScreenCheck.Mode.screenMode("screen-settings-tabs") == nil)
     #expect(SettingsScreenCheck.Mode.screenMode("header") == nil)
+}
+
+@Test @MainActor
+func unsupportedSystemPasswordInputIsNotAFailedCondition() {
+    let mode = SettingsScreenCheck.Mode.passwordsRealAuth
+    let required = SettingsScreenCheck.conditionNames(mode).filter { $0 != "password_unlocks" }
+    let passed = Dictionary(uniqueKeysWithValues: required.map { ($0, true) })
+    #expect(SettingsScreenCheck.conditionResults(passed, mode: mode).failed == ["password_unlocks"])
+    let unavailable = SettingsScreenCheck.conditionResults(
+        passed, mode: mode, unverified: ["password_unlocks": "AXValue write was refused"])
+    #expect(unavailable.failed.isEmpty)
+    #expect(unavailable.values["password_unlocks"] == nil)
 }

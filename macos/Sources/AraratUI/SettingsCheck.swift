@@ -46,6 +46,9 @@ public final class SettingsCheckProbe: NSObject {
     public var groupRowCounts: [Int] { model.resultGroups.map { $0.rows.count } }
     public var noResults: Bool { model.results.isEmpty }
     public var passwordsLocked: Bool { model.passwords.page == .list && model.passwords.state == .locked }
+    public var passwordsAuthenticationPending: Bool { model.passwords.busy }
+    public var passwordsAuthenticationFailed: Bool { model.passwords.error != nil }
+    public var passwordIsRevealed: Bool { model.passwords.showingPassword }
     public var passwordWebsites: [String]? {
         let passwords = model.passwords
         guard passwords.page == .list, passwords.state == .ready else { return nil }

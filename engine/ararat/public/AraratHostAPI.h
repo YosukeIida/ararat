@@ -23,6 +23,8 @@ NS_SWIFT_MAIN_ACTOR
 @property(nonatomic) BOOL offersToSave;
 @property(nonatomic, readonly) BOOL showsFillAuthentication;
 @property(nonatomic, readonly) BOOL authenticatesBeforeFilling;
+@property(nonatomic, readonly) BOOL checkUsesFakeAuthentication;
+@property(nonatomic, readonly) BOOL checkHadBiometricsAvailable;
 - (BOOL)setManagerEnabled:(BOOL)enabled;
 - (void)setAuthenticatesBeforeFilling:(BOOL)enabled
                           completion:(void (NS_SWIFT_MAIN_ACTOR ^)(BOOL changed))completion;

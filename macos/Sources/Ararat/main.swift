@@ -82,6 +82,10 @@ if PasswordsStoreCheck.requiresScratchGuard(CommandLine.arguments),
   fail("passwords check requires one scratch profile, one scratch database and --use-mock-keychain")
 }
 
+if PasswordsStoreCheck.guardOptions(CommandLine.arguments).contains("--ararat-screen=passwords-real-auth") {
+  MainActor.assumeIsolated { PasswordsRealAuthCheck.readPassword() }
+}
+
 if let check = CommandLine.arguments.first(where: { $0 == "--ararat-check=relaunch" || $0 == "--ararat-check=crash" || $0 == "--ararat-check=relaunch-pins" || $0 == "--ararat-check=relaunch-windows" || $0 == "--ararat-check=relaunch-windows-new" || $0 == "--ararat-check=private-durability" }) {
   if check == "--ararat-check=private-durability" { exit(runPrivateDurabilityDriver()) }
   exit(runRelaunchDriver(check == "--ararat-check=relaunch-pins" ? "pins" : String(check.dropFirst(15))))
@@ -1192,8 +1196,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let checkName = arguments.first(where: { $0.hasPrefix("--ararat-check=") }).map { String($0.dropFirst(15)) }
     let guardedOptions = PasswordsStoreCheck.guardOptions(arguments)
     let passwordPromptScreen = session == nil && guardedOptions.contains("--ararat-screen=password-prompt")
-    let screenName = passwordPromptScreen ? "password-prompt" :
-      arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
+    let screenName = guardedOptions.first(where: {
+      $0 == "--ararat-screen=password-prompt" || $0 == "--ararat-screen=passwords-real-auth"
+    }).map { String($0.dropFirst(16)) }
+      ?? arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
     if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "passwords", "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live", "atc-routing"].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
@@ -9487,13 +9493,14 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       result["images"] = check.images
     }
     if let mode = SettingsScreenCheck.Mode.mode(browserCheckMode ?? ""), let check = settingsCheck {
-      let names = SettingsScreenCheck.conditionNames(mode)
+      let conditions = SettingsScreenCheck.conditionResults(check.conditions, mode: mode, unverified: check.unverified)
       result["check"] = mode.rawValue
       result["screen"] = mode.rawValue
       result["pane"] = mode.paneID
-      result["conditions"] = Dictionary(uniqueKeysWithValues: names.map { ($0, check.conditions[$0] == true) })
-      result["failed_conditions"] = names.filter { check.conditions[$0] != true }
+      result["conditions"] = conditions.values
+      result["failed_conditions"] = conditions.failed
       result["images"] = check.images
+      if !check.unverified.isEmpty { result["unverified"] = check.unverified }
     }
     if browserCheckMode == "screen-errorpages" { result["check"] = "errorpages"; result["screen"] = "errorpages" }
     if browserCheckMode == "screen-downloads" { result["check"] = "downloads"; result["screen"] = "downloads" }
