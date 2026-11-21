@@ -40,9 +40,15 @@ extension Runtime {
             let before = PasswordsAuthPrompt.windowIDs()
             check.passwordsAuthPrompt = nil
             step(next)
-            // The system password dialog can keep Chromium inside a nested run loop.
-            let interaction = Task.detached { PasswordsAuthPrompt.interact(excluding: before, password: password) }
-            Task { check.passwordsAuthPrompt = await interaction.value }
+            Task.detached {
+                let result = PasswordsAuthPrompt.interact(excluding: before, password: password)
+                // Why not a MainActor task: the authorization dialog can hold the outer run loop open.
+                let runLoop = CFRunLoopGetMain()
+                CFRunLoopPerformBlock(runLoop, RunLoop.Mode.common.rawValue as CFString) {
+                    MainActor.assumeIsolated { check.passwordsAuthPrompt = result }
+                }
+                CFRunLoopWakeUp(runLoop)
+            }
             probe.unlockPasswords()
         }
         switch check.phase {
@@ -90,12 +96,12 @@ extension Runtime {
         case 4:
             guard let prompt = check.passwordsAuthPrompt else { note("waiting for password submission"); return }
             check.details["password_prompt"] = prompt.details
-            if let refusal = prompt.inputRefusal, probe.passwordsLocked {
+            if let refusal = prompt.inputRefusal {
                 check.unverified["password_unlocks"] = refusal
                 finish()
                 return
             }
-            guard prompt.found else { end("password_unlocks", false); return }
+            guard prompt.found, prompt.actionError == nil else { end("password_unlocks", false); return }
             guard !probe.passwordsAuthenticationPending else { note("waiting for login authorization"); return }
             guard !probe.passwordsAuthenticationFailed else { end("password_unlocks", false); return }
             guard probe.passwordWebsites == [website] else { note("waiting for the unlocked fixture"); return }
@@ -113,6 +119,12 @@ extension Runtime {
 }
 
 enum PasswordsAuthPrompt {
+    enum Submission {
+        case submitted
+        case writeRefused(AXError)
+        case failed(String)
+    }
+
     struct Result {
         var found = false
         var owner = ""
@@ -120,6 +132,19 @@ enum PasswordsAuthPrompt {
         var image: String?
         var actionError: String?
         var inputRefusal: String?
+
+        mutating func recordSubmission(_ submission: Submission, waitForClose: () -> Bool) -> Bool {
+            switch submission {
+            case .submitted:
+                if waitForClose() { return true }
+                actionError = "Password submission was refused: the authorization window stayed open after AXPress"
+            case .writeRefused(let error):
+                inputRefusal = "AXValue write to AXSecureTextField returned AXError \(error.rawValue)"
+            case .failed(let error):
+                actionError = error
+            }
+            return false
+        }
 
         var details: [String: String] {
             var values = ["owner": owner, "title": title]
@@ -165,30 +190,22 @@ enum PasswordsAuthPrompt {
             result.found = true
             let app = AXUIElementCreateApplication(pid)
             AXUIElementSetMessagingTimeout(app, 0.5)
-            let (windows, status) = attribute(app, kAXWindowsAttribute)
-            let dialog = (windows as? [AXUIElement])?
+            let (axWindows, status) = attribute(app, kAXWindowsAttribute)
+            let dialog = (axWindows as? [AXUIElement])?
                 .first(where: { matchesFrame($0, frame) })
             if let password {
-                if let dialog {
-                    result.inputRefusal = submit(password, in: dialog)
-                    if result.inputRefusal == nil {
-                        let submitted = clock.now + .seconds(4)
-                        while clock.now < submitted {
-                            if !windowIDs().contains(id) { return result }
-                            Thread.sleep(forTimeInterval: 0.1)
-                        }
-                        result.inputRefusal = "Authorization window stayed open after AXValue and AXPress returned success"
-                    }
-                } else {
-                    result.inputRefusal = "AXWindows did not expose the authorization window (AXError \(status.rawValue))"
-                }
+                let submission = dialog.map { submit(password, in: $0) }
+                    ?? .failed("AXWindows did not expose the authorization window (AXError \(status.rawValue))")
+                if result.recordSubmission(submission, waitForClose: { waitForWindowToClose(id) }) { return result }
             } else {
                 result.owner = window[kCGWindowOwnerName as String] as? String ?? ""
                 result.title = window[kCGWindowName as String] as? String ?? ""
                 result.image = capture(id)
             }
             if windowIDs().contains(id) {
-                result.actionError = cancel(dialog, pid: pid)
+                if let error = cancel(dialog, pid: pid, windowID: id) {
+                    result.actionError = result.actionError.map { $0 + "; " + error } ?? error
+                }
             } else if password == nil {
                 result.actionError = "The authorization window closed before Cancel was sent"
             }
@@ -227,7 +244,7 @@ enum PasswordsAuthPrompt {
         return [element] + children.flatMap { elements($0, depth: depth + 1) }
     }
 
-    private static func submit(_ password: String, in dialog: AXUIElement) -> String? {
+    private static func submit(_ password: String, in dialog: AXUIElement) -> Submission {
         let controls = elements(dialog)
         let isUnlockPrompt = controls.contains { control in
             guard attribute(control, kAXRoleAttribute).0 as? String == kAXStaticTextRole else { return false }
@@ -235,18 +252,34 @@ enum PasswordsAuthPrompt {
                 (attribute(control, name).0 as? String)?.localizedCaseInsensitiveContains("unlock saved passwords") == true
             }
         }
-        guard isUnlockPrompt else { return "AX did not expose the saved-password unlock message" }
+        guard isUnlockPrompt else { return .failed("AX did not expose the saved-password unlock message") }
         let fields = controls.filter { attribute($0, kAXSubroleAttribute).0 as? String == "AXSecureTextField" }
-        guard fields.count == 1, let field = fields.first else { return "AXChildren exposed \(fields.count) secure text fields" }
+        guard fields.count == 1, let field = fields.first else {
+            return .failed("AXChildren exposed \(fields.count) secure text fields")
+        }
         let (submit, status) = button(dialog, kAXDefaultButtonAttribute)
-        guard let submit else { return "AXDefaultButton unavailable (AXError \(status.rawValue))" }
+        guard let submit else { return .failed("AXDefaultButton unavailable (AXError \(status.rawValue))") }
         let set = AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, password as CFString)
-        guard set == .success else { return "AXValue write to AXSecureTextField returned AXError \(set.rawValue)" }
+        guard set == .success else { return .writeRefused(set) }
         let press = AXUIElementPerformAction(submit, kAXPressAction as CFString)
-        return press == .success ? nil : "AXPress on AXDefaultButton returned AXError \(press.rawValue)"
+        return press == .success ? .submitted : .failed("AXPress on AXDefaultButton returned AXError \(press.rawValue)")
     }
 
-    private static func cancel(_ dialog: AXUIElement?, pid: pid_t) -> String? {
+    private static func waitForWindowToClose(_ id: CGWindowID) -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + .seconds(4)
+        repeat {
+            if !windowIDs().contains(id) { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while clock.now < deadline
+        return false
+    }
+
+    static func escapeCancellationError(after refusal: String, windowClosed: Bool) -> String? {
+        windowClosed ? nil : refusal + "; the authorization window stayed open after process-directed Escape"
+    }
+
+    private static func cancel(_ dialog: AXUIElement?, pid: pid_t, windowID: CGWindowID) -> String? {
         var refusal = "AXWindows did not expose the authorization window"
         if let dialog {
             let (cancel, status) = button(dialog, kAXCancelButtonAttribute)
@@ -264,7 +297,7 @@ enum PasswordsAuthPrompt {
         }
         down.postToPid(pid)
         up.postToPid(pid)
-        return nil
+        return escapeCancellationError(after: refusal, windowClosed: waitForWindowToClose(windowID))
     }
 
     private static func capture(_ id: CGWindowID) -> String? {

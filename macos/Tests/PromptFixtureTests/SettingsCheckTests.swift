@@ -159,13 +159,38 @@ func aSettingsScreenArgumentReachesItsModeAndBackThroughTheCheckMode() {
 }
 
 @Test @MainActor
-func unsupportedSystemPasswordInputIsNotAFailedCondition() {
+func systemPasswordSubmissionMapsToFailedOrUnverified() {
     let mode = SettingsScreenCheck.Mode.passwordsRealAuth
     let required = SettingsScreenCheck.conditionNames(mode).filter { $0 != "password_unlocks" }
     let passed = Dictionary(uniqueKeysWithValues: required.map { ($0, true) })
-    #expect(SettingsScreenCheck.conditionResults(passed, mode: mode).failed == ["password_unlocks"])
+
+    var rejected = PasswordsAuthPrompt.Result()
+    let closedAfterSubmission = rejected.recordSubmission(.submitted, waitForClose: { false })
+    #expect(!closedAfterSubmission)
+    #expect(rejected.actionError?.contains("stayed open after AXPress") == true)
+    #expect(rejected.inputRefusal == nil)
+    var conditions = passed
+    conditions["password_unlocks"] = false
+    let failed = SettingsScreenCheck.conditionResults(conditions, mode: mode)
+    #expect(failed.failed == ["password_unlocks"])
+
+    var refused = PasswordsAuthPrompt.Result()
+    let closedAfterRefusal = refused.recordSubmission(.writeRefused(.cannotComplete)) {
+        Issue.record("A refused AX write must not wait for submission")
+        return false
+    }
+    #expect(!closedAfterRefusal)
+    #expect(refused.actionError == nil)
     let unavailable = SettingsScreenCheck.conditionResults(
-        passed, mode: mode, unverified: ["password_unlocks": "AXValue write was refused"])
+        passed, mode: mode, unverified: refused.inputRefusal.map { ["password_unlocks": $0] } ?? [:])
     #expect(unavailable.failed.isEmpty)
     #expect(unavailable.values["password_unlocks"] == nil)
+}
+
+@Test
+func escapeCancellationRequiresTheAuthorizationWindowToClose() {
+    let refusal = "AXCancelButton unavailable"
+    #expect(PasswordsAuthPrompt.escapeCancellationError(after: refusal, windowClosed: true) == nil)
+    #expect(PasswordsAuthPrompt.escapeCancellationError(after: refusal, windowClosed: false)
+        == "AXCancelButton unavailable; the authorization window stayed open after process-directed Escape")
 }
