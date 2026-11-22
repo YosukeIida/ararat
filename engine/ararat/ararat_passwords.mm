@@ -587,13 +587,14 @@ bool IsScratchPasswordProfile(const base::FilePath& path) {
       !IsScratchPasswordProfile(target.DirName()))
     return NO;
   auto login = [](std::string realm, std::u16string user, std::string password,
-                  bool blocked = false) {
+                  bool blocked = false, int scheme = 0) {
     ararat::ArcLogin row;
     row.origin_url = realm;
     row.signon_realm = std::move(realm);
     row.username = std::move(user);
     row.password = std::move(password);
     row.blocked = blocked;
+    row.scheme = scheme;
     return row;
   };
   const std::vector<ararat::ArcLogin> rows = {
@@ -604,6 +605,8 @@ bool IsScratchPasswordProfile(const base::FilePath& path) {
       login("https://arc-fixture-4.invalid/", u"", "", /*blocked=*/true),
       login("https://arc-fixture-5.invalid/", u"dan", "raw:v10notencrypted"),
       login("https://arc-fixture-6.invalid/", u"eve", "raw:v11whatever"),
+      login("https://arc-fixture-7.invalid/", u"fay", "arc-fixture-71",
+            /*blocked=*/false, /*scheme=*/1),
   };
   base::ScopedAllowBlockingForTesting allow_blocking;
   return ararat::WriteArcLoginDataForTesting(target, "fixture-arc-secret", rows);
@@ -620,6 +623,12 @@ bool IsScratchPasswordProfile(const base::FilePath& path) {
   for (const auto& login : result.logins) {
     if (login.blocked) {
       ++counts.neverSaved;
+      continue;
+    }
+    // Not imported: AddCredential stores every entry as an HTML form, so a
+    // Basic or Digest row would become a form password for the wrong prompt.
+    if (login.scheme != static_cast<int>(password_manager::PasswordForm::Scheme::kHtml)) {
+      ++counts.invalid;
       continue;
     }
     CredentialUIEntry entry;
