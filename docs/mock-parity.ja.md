@@ -46,7 +46,7 @@ uv run --no-project python -B macos/scripts/mock-values/pair_pngs.py "$MOCK_PNG"
 
 `B-Split.dc.html:20` は説明文でセグメントに言及しているが、図では分割行の背景全体を一つに塗っている。セグメントごとの背景は `A-TabRows.dc.html:79–82` で定義され、Swift もこの定義に従う。非フォーカス時の背景はライトとダークの両方でホバー色の CSS 変数を参照する。
 
-[アーキテクチャ §7](architecture.ja.md) と Little Window のコードでは 46 pt をモック独自の値として扱っている。[Cra の Arc 調査](research/arc-dia-components.ja.md)と [Yab との比較](research/yab-values.ja.md)には Arc の値として 46 pt が記録されている。実装は 48 pt であり、値の出典が確定するまで、照合表にはオーナーの寸法規則を理由として記載する。
+[アーキテクチャ §7](architecture.ja.md) と Little Window のコードでは 46 pt をモック独自の値として扱っている。[Cra の Arc 調査](research/arc-dia-components.ja.md)と [Yab との比較](research/yab-values.ja.md)には Arc の値として 46 pt が記録されている。オーナーが 2026-11-23 に 48 pt と決めたので、バーは 48 pt のままとし、照合表にはこの決定を理由として記載する。
 
 ## ページ別の照合結果
 

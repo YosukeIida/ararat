@@ -44,7 +44,7 @@ uv run --no-project python -B macos/scripts/mock-values/pair_pngs.py "$MOCK_PNG"
 ## Source discrepancies
 
 - `B-Split.dc.html:20` describes segments in its caption and depicts the selected split with a single row-level fill. The component drawing `A-TabRows.dc.html:79–82` defines the per-segment fill, and the Swift implementation follows that drawing. The inactive segment explicitly references the row hover CSS variable in both appearances.
-- [Architecture §7](architecture.md) and the Little Window code call the board's 46 pt height unmeasured. [Cra's Arc observations](research/arc-dia-components.md) and [the Yab comparison](research/yab-values.md#little-window) list 46 pt as the Arc value. The token table records the product's 48 pt structural bar height with the owner spacing rule pending a decision on the conflicting provenance.
+- [Architecture §7](architecture.md) and the Little Window code call the board's 46 pt height unmeasured. [Cra's Arc observations](research/arc-dia-components.md) and [the Yab comparison](research/yab-values.md#little-window) list 46 pt as the Arc value. The owner chose 48 pt on 2026-11-23, so the bar stays at 48 pt and the token table records that decision.
 
 ## Review ledger
 
