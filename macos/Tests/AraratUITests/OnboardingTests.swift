@@ -51,10 +51,16 @@ func onboardingRendersFixturePasswordProfilesAndReports() throws {
     probe.render()
     probe.layout()
     #expect(probe.reportLines.suffix(3) == [
-        "Default passwords: 2 added, 1 existing, 1 conflicts.",
-        "1 Never rows skipped, 2 unreadable, 0 invalid.",
+        "Default passwords: 2 added, 1 existing, 1 conflict.",
+        "1 Never row skipped, 2 unreadable, 1 invalid.",
         "University: Access to Arc Safe Storage was not allowed",
     ])
+    #expect(OnboardingFixturePasswordResult(profile: "Default",
+        outcome: .imported(added: 0, existing: 0, conflicts: 2, neverSaved: 2, undecryptable: 0, invalid: 0))
+        .reportLines.map(\.text) == [
+            "Default passwords: 0 added, 0 existing, 2 conflicts.",
+            "2 Never rows skipped, 0 unreadable, 0 invalid.",
+        ])
     #expect(OnboardingFixturePasswordResult(profile: "University", outcome: .unsupportedVersion)
         .reportLines.map(\.text) == ["University: Unsupported Arc password database version"])
 }

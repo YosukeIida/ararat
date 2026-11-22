@@ -9,7 +9,7 @@ import AraratUI
 /// window's own buttons, captures each, and asserts that the report's numbers are the showcase
 /// fixture's (so the import read the injected strings, not the owner's Arc), that the store is the
 /// check's `--ararat-db`, that the default browser button went through the fake and the host's
-/// handler did not move, and that the sign-in and Passwords rows and line are absent.
+/// handler did not move, and that the sign-in rows and line are absent.
 
 /// The screen 4 seam as the check injects it: counts the calls and never touches LaunchServices.
 final class FakeDefaultBrowserSetter: DefaultBrowserSetter {
@@ -257,8 +257,8 @@ extension Runtime {
                  && texts.contains { $0.contains("2 folders were open in one Arc window") }
                  && texts.contains { $0.contains("1 route sent links to a profile") }
                  && texts.contains { $0.contains("3 custom keyboard shortcuts") }
-                 && texts.contains("Default passwords: 2 added, 1 existing, 1 conflicts.")
-                 && texts.contains("1 Never rows skipped, 2 unreadable, 0 invalid.")
+                 && texts.contains("Default passwords: 2 added, 1 existing, 1 conflict.")
+                 && texts.contains("1 Never row skipped, 2 unreadable, 1 invalid.")
                  && texts.contains("University: Access to Arc Safe Storage was not allowed"))
             mark("no_signin_line", !texts.contains { $0.lowercased().contains("sign-in") })
             // The store the flow wrote is the check's database and its fixture's spaces are in it.

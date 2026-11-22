@@ -7,7 +7,7 @@ if [ "$#" -ne 2 ] || [ ! -f "$1" ] || [ ! -f "$2" ]; then
 fi
 
 if /usr/bin/grep -Fq \
-    -e 'arc-fixture-11' -e 'arc-fixture-32' -e 'ararat-own-31' \
+    -e 'arc-fixture-11' -e 'arc-fixture-32' -e 'arc-fixture-71' -e 'ararat-own-31' \
     -e 'arc "fixture", 12' -e 'arc \"fixture\", 12' \
     -e 'v10notencrypted' -e 'v11whatever' -e 'fixture-arc-secret' -- "$1" "$2"; then
     echo 'Arc password fixture material found in process output' >&2

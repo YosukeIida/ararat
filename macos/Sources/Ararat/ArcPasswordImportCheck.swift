@@ -110,7 +110,7 @@ final class ArcPasswordImportCheck {
             guard self.record(label + "_status", status == .imported),
                   self.record(label + "_counts", result.added == (retry ? 0 : 2)
                     && result.existing == (retry ? 3 : 1) && result.conflicts == 1
-                    && result.neverSaved == 1 && result.undecryptable == 2 && result.invalid == 0)
+                    && result.neverSaved == 1 && result.undecryptable == 2 && result.invalid == 1)
             else { return }
             if retry {
                 self.handle.importArcPasswords(from: self.directory.appendingPathComponent("missing").path) { [weak self] status, _ in

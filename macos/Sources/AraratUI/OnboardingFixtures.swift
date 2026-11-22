@@ -35,7 +35,7 @@ public enum OnboardingFixtures {
         var data = showcase
         data.fixturePasswordResults = [
             .init(profile: "Default", outcome: .imported(added: 2, existing: 1, conflicts: 1,
-                                                        neverSaved: 1, undecryptable: 2, invalid: 0)),
+                                                        neverSaved: 1, undecryptable: 2, invalid: 1)),
             .init(profile: "University", outcome: .noKey),
         ]
         return data
