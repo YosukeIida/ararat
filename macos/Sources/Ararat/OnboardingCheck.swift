@@ -257,8 +257,8 @@ extension Runtime {
                  && texts.contains { $0.contains("2 folders were open in one Arc window") }
                  && texts.contains { $0.contains("1 route sent links to a profile") }
                  && texts.contains { $0.contains("3 custom keyboard shortcuts") }
-                 && texts.contains("Default passwords: 2 added, 1 existing, 1 conflicts.")
-                 && texts.contains("1 Never rows skipped, 2 unreadable, 0 invalid.")
+                 && texts.contains("Default passwords: 2 added, 1 existing, 1 conflict.")
+                 && texts.contains("1 Never row skipped, 2 unreadable, 1 invalid.")
                  && texts.contains("University: Access to Arc Safe Storage was not allowed"))
             mark("no_signin_line", !texts.contains { $0.lowercased().contains("sign-in") })
             // The store the flow wrote is the check's database and its fixture's spaces are in it.

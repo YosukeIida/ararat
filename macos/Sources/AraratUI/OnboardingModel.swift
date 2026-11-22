@@ -65,8 +65,8 @@ struct OnboardingFixturePasswordResult: Sendable {
         switch outcome {
         case let .imported(added, existing, conflicts, neverSaved, undecryptable, invalid):
             return [
-                .init(id: id, text: "\(profile) passwords: \(added) added, \(existing) existing, \(conflicts) conflicts."),
-                .init(id: id + "-details", text: "\(neverSaved) Never rows skipped, \(undecryptable) unreadable, \(invalid) invalid.")
+                .init(id: id, text: "\(profile) passwords: \(added) added, \(existing) existing, \(conflicts) \(conflicts == 1 ? "conflict" : "conflicts")."),
+                .init(id: id + "-details", text: "\(neverSaved) Never \(neverSaved == 1 ? "row" : "rows") skipped, \(undecryptable) unreadable, \(invalid) invalid.")
             ]
         case .noKey:
             return [.init(id: id, text: "\(profile): Access to Arc Safe Storage was not allowed")]
