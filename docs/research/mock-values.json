@@ -50,7 +50,7 @@
   {"source": "D-CommandBar.dc.html:37", "selector": ".d-rows", "property": "padding", "css": "10px", "swift": "CommandBarMetrics.rowInset", "expected": 10.0},
   {"source": "D-CommandBar.dc.html:37", "selector": ".d-rows", "property": "gap", "css": "2px", "swift": "CommandBarMetrics.rowGap", "expected": 2.0},
   {"source": "D-CommandBar.dc.html:38", "selector": ".d-cr", "property": "height", "css": "50px", "swift": "CommandBarMetrics.rowHeight", "expected": 50.0},
-  {"source": "D-LittleWindow.dc.html:70", "selector": ".d-lbar", "property": "height", "css": "46px", "swift": "LittleWindowMetrics.barHeight", "reason": "owner: 48 pt chosen over the 46 pt board and Arc value on 2026-11-23 (docs/mock-parity.md)"},
+  {"source": "D-LittleWindow.dc.html:70", "selector": ".d-lbar", "property": "height", "css": "48px", "swift": "LittleWindowMetrics.barHeight", "expected": 48},
   {"source": "D-LittleWindow.dc.html:70", "selector": ".d-lbar", "property": "background", "css": "#232327", "swift": "LittleWindowMetrics.barBackground", "expected": [0.13725490196078433, 0.13725490196078433, 0.15294117647058825, 1]},
   {"source": "D-LittleWindow.dc.html:70", "selector": ".d-lbar", "property": "color", "css": "#EBEBEB", "swift": "LittleWindowMetrics.barText", "expected": [0.9215686274509803, 0.9215686274509803, 0.9215686274509803, 1]},
   {"source": "D-LittleWindow.dc.html:70", "selector": ".d-lbar", "property": "box-shadow", "css": "inset 0 -1px 0 rgba(255,255,255,0.08)", "swift": "LittleWindowMetrics.hairline", "expected": [1.0, 1.0, 1.0, 0.08]},
