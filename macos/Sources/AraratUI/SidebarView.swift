@@ -1826,7 +1826,7 @@ public final class SidebarView: NSView {
         for id in Array(favoriteTiles.keys) where !ids.contains(id) {
             favoriteTiles.removeValue(forKey: id)?.removeFromSuperview()
         }
-        let columns = SidebarDragMetrics.favoriteColumns(width: bounds.width - 16, slots: dragFavoriteIndex == nil ? 4 : models.count)
+        let columns = SidebarDragMetrics.favoriteColumns(width: bounds.width - 16, slots: models.count)
         let lineCount = (models.count + columns - 1) / columns
         favoritesHeight.constant = CGFloat(lineCount * 47 + max(0, lineCount - 1) * 8)
         spaceColumn.setCustomSpacing(models.isEmpty ? 0 : 22, after: favorites)

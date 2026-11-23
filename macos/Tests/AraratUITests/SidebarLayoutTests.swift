@@ -56,6 +56,26 @@ func favoritesUseColumnsThatFit() {
 }
 
 @Test @MainActor
+func fewerFavoritesThanColumnsShareTheWholeWidth() {
+    for count in 1...3 {
+        let favorites = (0..<count).map {
+            Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "fav-\($0)", title: "Favorite", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+        }
+        let snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
+            SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "space", title: "Work", icon: nil, look: nil, favorites: favorites, pinned: [], today: [])
+        ])
+        let sidebar = SidebarView(snapshot: snapshot)
+        sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 720)
+        sidebar.layoutSubtreeIfNeeded()
+        let tiles = descendants(of: sidebar).compactMap { $0 as? FavoriteTile }
+        #expect(tiles.count == count)
+        let last = sidebar.convert(tiles[count - 1].bounds, from: tiles[count - 1])
+        #expect(abs(last.maxX - 232) <= 0.5)
+        #expect(abs(last.width - (224 - Double(count - 1) * 8) / Double(count)) <= 0.5)
+    }
+}
+
+@Test @MainActor
 func spaceNameCapTopIsTwentyTwoPointsBelowFavorites() {
     let favorite = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "favorite", title: "Mail", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
     let sidebar = SidebarView(snapshot: WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: nil, spaces: [
