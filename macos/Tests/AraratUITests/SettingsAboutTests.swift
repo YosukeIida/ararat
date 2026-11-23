@@ -64,6 +64,8 @@ func aboutListsTheBundledThirdPartyNotices() throws {
         (name: "Ardia Apache-2.0 Licence", file: "Ardia-LICENSE.Apache-2.0.txt", source: "third_party/ardia/LICENSE.Apache-2.0"),
         (name: "Ardia NOTICE", file: "Ardia-NOTICE.txt", source: "third_party/ardia/NOTICE"),
         (name: "Cra MIT Licence", file: "Cra-LICENSE.txt", source: "third_party/cra/LICENSE"),
+        (name: "Yab Apache-2.0 Licence", file: "Yab-LICENSE.txt", source: "third_party/yab/LICENSE"),
+        (name: "Yab NOTICE", file: "Yab-NOTICE.txt", source: "third_party/yab/NOTICE"),
     ]
     for notice in notices {
         try fileManager.copyItem(at: repo.appendingPathComponent(notice.source), to: resources.appendingPathComponent(notice.file))
