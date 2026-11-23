@@ -30,6 +30,7 @@
               clippy
               rustfmt
               rust-analyzer
+              resvg
               # REA needs ^22.23.4 || ^24.22.1 || >=26.12.1; nodejs_24 on 26.05 is still 24.21.
               nodejs_22
               unstable.ghidra

@@ -117,6 +117,10 @@ plist="$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName Ararat" "$plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Ararat" "$plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier net.iodine2.ararat" "$plist"
+# Why not rebuild Assets.car with our AppIcon: its "Icon" image is the document badge the UTTypes use.
+# Without CFBundleIconName, macOS takes the app icon from CFBundleIconFile (app.icns) instead.
+cp -- "$package_dir/Resources/AppIcon.icns" "$app/Contents/Resources/app.icns"
+plutil -remove CFBundleIconName "$plist"
 
 # Why keep the original value: the launcher must load the exact Chromium build it ships.
 framework_version="$(plutil -extract CFBundleShortVersionString raw -expect string -o - "$plist")"
