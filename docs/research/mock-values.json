@@ -82,6 +82,7 @@
   {"source": "B-Library.dc.html:25", "selector": "<button style>", "property": "gap", "css": "8px", "swift": "LibraryView.railTileContentGap", "expected": 8},
   {"source": "B-Library.dc.html:25", "selector": "<button style>", "property": "top", "css": "46px", "swift": "SidebarMetrics.libraryContentTop", "expected": 46},
   {"source": "B-Library.dc.html:25", "selector": "<button style>", "property": "background", "css": "#FFFFFF", "swift": "LibraryView.lightSelectedTileFill", "expected": [1, 1, 1, 1]},
+  {"source": "B-Library.dc.html:22", "selector": ".rail-item:active", "property": "filter", "css": "brightness(0.96)", "swift": "LibraryView.railTilePressedBrightness", "expected": 0.96},
   {"source": "B-LibraryStates.dc.html:18", "selector": "<button style>", "property": "background", "css": "rgba(255,255,255,0.13)", "swift": "LibraryView.darkSelectedTileFill", "expected": [1, 1, 1, 0.13]},
   {"source": "B-Library.dc.html:25", "selector": "<button style>", "property": "top", "css": "856px", "swift": "SidebarMetrics.libraryFooterInset", "expected": 53, "reason": "The footer keeps the mock's 12 pt inset above the dock. The dock occupies 41 pt including its measured bottom inset."},
   {"source": "C-Downloads.dc.html:150", "selector": "<div style>", "property": "padding", "css": "10px 6px 6px", "swift": "DownloadsPageView.contentInset", "expected": 8, "reason": "The full history uses the owner's 8 pt spacing grid. The 6 pt inset belongs to the popover."},

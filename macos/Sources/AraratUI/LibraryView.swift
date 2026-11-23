@@ -7,6 +7,7 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     static let railTileIconSize: CGFloat = 22
     static let railTileContentGap: CGFloat = 8
     static let railTileGap: CGFloat = 20
+    static let railTilePressedBrightness: CGFloat = 0.96
     static let lightSelectedTileFill = NSColor.white
     static let darkSelectedTileFill = NSColor.white.withAlphaComponent(0.13)
 
@@ -490,15 +491,16 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     }
     @objc private func exitLibrary() { onExit?() }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateFill() }
+    // Why not fill the Library and its rail with window and control backgrounds: those cover the
+    // sidebar panel's surface, and the mock's rail is that surface (`B-Library.dc.html:25` tints the
+    // whole 310 pt block). The Library replaces the sidebar, so it draws no background of its own.
     private func updateFill() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-            rail.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
             let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             let fill = dark ? Self.darkSelectedTileFill : Self.lightSelectedTileFill
             for (button, selected) in [(archiveButton, page == .archive), (downloadsButton, page == .downloads)] {
                 button.setAccessibilityValue(selected ? "selected" : nil)
-                button.layer?.backgroundColor = selected ? fill.cgColor : nil
+                button.fillColor = selected ? fill : nil
                 button.layer?.shadowColor = NSColor.black.cgColor
                 button.layer?.shadowOffset = CGSize(width: 0, height: -SidebarMetrics.rowSelectedShadowY)
                 button.layer?.shadowRadius = SidebarMetrics.rowSelectedShadowBlur
@@ -512,8 +514,12 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
 /// `B-Library.dc.html:25` draws them. Why not `.imageAbove`: AppKit pins the 22 pt image near the
 /// tile's top edge and the title near the bottom, which left the group high and 30 pt apart.
 final class LibraryRailTileButton: NSButton {
+    private static let pressInterval: TimeInterval = 1 / 60
     let iconView = LibraryRailTileIconView()
     let label = NSTextField(labelWithString: "")
+    /// The selected fill, or nil while the tile's page is not the shown one.
+    var fillColor: NSColor? { didSet { updateAppearance() } }
+    private(set) var isPressed = false { didSet { if isPressed != oldValue { updateAppearance() } } }
     private let content = NSStackView()
 
     init(title: String, symbol: String) {
@@ -531,6 +537,7 @@ final class LibraryRailTileButton: NSButton {
         label.font = .systemFont(ofSize: SidebarMetrics.libraryFontSize, weight: .semibold)
         // Why not the mock's #1D1D1F: the tile keeps the button title colour the rail used before.
         label.textColor = .controlTextColor
+        iconView.contentTintColor = .controlTextColor
         label.setAccessibilityHidden(true)
         content.orientation = .vertical
         content.alignment = .centerX
@@ -556,6 +563,57 @@ final class LibraryRailTileButton: NSButton {
     /// must still reach the tile's button cell.
     override func hitTest(_ point: NSPoint) -> NSView? {
         super.hitTest(point) == nil ? nil : self
+    }
+
+    /// The mock's `.rail-item:active` (`B-Library.dc.html:22`): every sRGB channel of the fill, icon
+    /// and label times `LibraryView.railTilePressedBrightness`; alpha is kept.
+    static func pressedColor(_ color: NSColor,
+                             brightness: CGFloat = LibraryView.railTilePressedBrightness) -> NSColor {
+        guard let srgb = color.usingColorSpace(.sRGB) else { return color }
+        return NSColor(srgbRed: srgb.redComponent * brightness, green: srgb.greenComponent * brightness,
+                       blue: srgb.blueComponent * brightness, alpha: srgb.alphaComponent)
+    }
+
+    /// Why not AppKit's highlight callback: the borderless tile's cell decides when to report a
+    /// highlight, while the mock's `.rail-item:active` is defined by the pointer being down inside
+    /// the tile, and the icon and label are subviews the cell does not draw either way.
+    override func mouseDown(with event: NSEvent) {
+        setPressed(true)
+        let timer = Timer(timeInterval: Self.pressInterval, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            MainActor.assumeIsolated { self.followPress() }
+        }
+        RunLoop.main.add(timer, forMode: .eventTracking)
+        super.mouseDown(with: event)
+        timer.invalidate()
+        setPressed(false)
+    }
+
+    /// The press ends on release (`mouseDown` clears it) or when the pointer leaves the tile; a
+    /// pointer that comes back in dims the tile again, as CSS keeps `:active`.
+    private func followPress() {
+        guard let window else { return }
+        setPressed(bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)))
+    }
+
+    /// The button's pressed state, split from its events so a check can drive it without an event.
+    func setPressed(_ pressed: Bool) {
+        isPressed = pressed
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateAppearance()
+    }
+
+    private func updateAppearance() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            let fill = fillColor.map { isPressed ? Self.pressedColor($0) : $0 }
+            layer?.backgroundColor = fill?.cgColor
+            let text = isPressed ? Self.pressedColor(.controlTextColor) : .controlTextColor
+            label.textColor = text
+            iconView.contentTintColor = text
+        }
     }
 }
 
