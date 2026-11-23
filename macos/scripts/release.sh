@@ -11,6 +11,9 @@ shift
 
 scripts="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 . "$scripts/release-version.sh"
+# The devshell's DEVELOPER_DIR names nix's apple-sdk, where /usr/bin/git and codesign find no tools.
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+unset SDKROOT
 parse_release_tag "$tag" || die "expected vX.Y.Z or vX.Y.Z-preview.N"
 
 engine="$HOME/chromium-build/src/out/Ararat/Chromium.app"
@@ -54,7 +57,7 @@ require_new_tag
 repo="$(gh repo view "$(git remote get-url origin)" --json nameWithOwner --jq .nameWithOwner)"
 
 nix develop ./nix --no-update-lock-file -c "$scripts/build-core.sh"
-(cd macos && env -u SDKROOT DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release)
+(cd macos && swift build -c release)
 [[ "$(git rev-parse --verify HEAD)" == "$head" ]] || die "HEAD changed during the build"
 
 out="$(mktemp -d)"
