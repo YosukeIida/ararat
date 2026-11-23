@@ -28,8 +28,6 @@ func unthemedDarkSidebarDrawsTheMeasuredBackdrop() throws {
     panel.appearance = NSAppearance(named: .darkAqua)
     #expect(!panel.coating.isHidden)
     expectRGB(try pixel(panel.gradient), 22.0 / 255, 15.0 / 255, 31.0 / 255)
-    panel.active = false
-    #expect(!panel.coating.isHidden)
     panel.appearance = NSAppearance(named: .aqua)
     #expect(panel.coating.isHidden)
 }
@@ -152,7 +150,7 @@ func glassWithZeroOpacityUnderReducedTransparencyKeepsGrain() throws {
 }
 
 @Test @MainActor
-func unthemedLightSidebarKeepsLegacyVibrancyAndPixels() throws {
+func unthemedLightSidebarMatchesActiveSidebarVibrancyPixels() throws {
     for reduced in [false, true] {
         let panel = lookPanel()
         panel.reduceTransparency = { reduced }
@@ -162,23 +160,24 @@ func unthemedLightSidebarKeepsLegacyVibrancyAndPixels() throws {
         #expect(panel.vibrancy.material == .sidebar)
         #expect(panel.vibrancy.blendingMode == .behindWindow)
         #expect(panel.vibrancy.appearance == nil)
-        let legacy = NSVisualEffectView(frame: panel.bounds)
-        legacy.appearance = panel.appearance
-        legacy.material = .sidebar
-        legacy.blendingMode = .behindWindow
+        let reference = NSVisualEffectView(frame: panel.bounds)
+        reference.appearance = panel.appearance
+        reference.material = .sidebar
+        reference.blendingMode = .behindWindow
+        reference.state = .active
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 128, height: 64), styleMask: [], backing: .buffered, defer: false)
         defer { window.contentView = nil }
         let root = NSView(frame: window.contentLayoutRect)
         window.contentView = root
         root.addSubview(panel)
-        legacy.frame.origin.x = 64
-        root.addSubview(legacy)
+        reference.frame.origin.x = 64
+        root.addSubview(reference)
         root.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
         let a = try #require(panel.bitmapImageRepForCachingDisplay(in: panel.bounds))
-        let b = try #require(legacy.bitmapImageRepForCachingDisplay(in: legacy.bounds))
+        let b = try #require(reference.bitmapImageRepForCachingDisplay(in: reference.bounds))
         panel.cacheDisplay(in: panel.bounds, to: a)
-        legacy.cacheDisplay(in: legacy.bounds, to: b)
+        reference.cacheDisplay(in: reference.bounds, to: b)
         #expect(a.representation(using: .png, properties: [:]) == b.representation(using: .png, properties: [:]))
         #expect(!window.isVisible)
     }

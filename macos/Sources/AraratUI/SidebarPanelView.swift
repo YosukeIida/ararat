@@ -17,19 +17,12 @@ final class SidebarPanelView: NSView {
     private var backdropBase = NSColor.clear
     var reduceTransparency: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency }
     var systemAppearance: () -> NSAppearance = { NSApp.effectiveAppearance }
-    /// False while the window is not the active one: the space's colour and grain are dropped, the vibrancy and Glass stay.
-    var active = true {
-        didSet {
-            guard active != oldValue else { return }
-            renderLook()
-        }
-    }
-
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         vibrancy.material = .sidebar
         vibrancy.blendingMode = .behindWindow
+        vibrancy.state = .active
         addSubview(vibrancy)
         coating.wantsLayer = true
         coating.layer?.addSublayer(gradient)
@@ -135,9 +128,7 @@ final class SidebarPanelView: NSView {
         }
         // Why not force Auto's backdrop appearance: its vibrancy must keep following the system.
         vibrancy.appearance = mode == .auto ? nil : backgroundAppearance
-        // While inactive the colour layer is hidden, so the text must follow the backdrop that is drawn (the
-        // vibrancy's or Glass's appearance) rather than the Look's colour; for Auto that is the system's.
-        let textAppearance = !hasLook ? nil : !active ? vibrancy.appearance : NSAppearance(named: dark ? .darkAqua : .aqua)
+        let textAppearance = hasLook ? NSAppearance(named: dark ? .darkAqua : .aqua) : nil
         for view in subviews where view !== vibrancy && view !== coating && view !== glass {
             if view.appearance != textAppearance { view.appearance = textAppearance }
         }
@@ -165,7 +156,7 @@ final class SidebarPanelView: NSView {
             gradient.colors = colors.map(\.cgColor)
         }
         grain.opacity = Float(((source?.grain ?? 0) * (1 - fraction) + (destination?.grain ?? 0) * fraction))
-        coating.isHidden = hasLook ? !active : unthemed.alphaComponent == 0
+        coating.isHidden = !hasLook && unthemed.alphaComponent == 0
         CATransaction.commit()
         backdropBase = base
         for case let sidebar as SidebarView in subviews {

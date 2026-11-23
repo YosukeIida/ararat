@@ -132,9 +132,6 @@ public final class SidebarContainerView: NSView {
     var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     var applicationActive: () -> Bool = { NSApp.isActive }
     var windowKey: (() -> Bool)?
-    /// Inactive means the app is not active or another window took main; a key child panel (the command bar)
-    /// leaves the window main and must leave the tint on.
-    var windowMain: (() -> Bool)?
     var pressedButtons: () -> Int = { NSEvent.pressedMouseButtons }
 
     public func lookCheckRendering(reduced: Bool) -> (vibrancy: Bool, glass: Bool, grain: Float, alpha: CGFloat, color: NSColor?) {
@@ -191,12 +188,6 @@ public final class SidebarContainerView: NSView {
     public var panelRectForCheck: NSRect? {
         guard let window, panel.superview === self else { return nil }
         return window.convertToScreen(panel.convert(panel.bounds, to: nil))
-    }
-    public func dockCheckSetMain(_ main: Bool) {
-        guard CommandLine.arguments.contains("--ararat-check=dock") else { return }
-        applicationActive = { true }
-        windowMain = { main }
-        if let window { NotificationCenter.default.post(name: main ? NSWindow.didBecomeMainNotification : NSWindow.didResignMainNotification, object: window) }
     }
     public var onPresentationChanged: (() -> Void)?
     public var savedPresentation: WindowPresentation {
@@ -620,10 +611,6 @@ public final class SidebarContainerView: NSView {
         needsLayout = true
     }
 
-    private func updateActive() {
-        panel.active = applicationActive() && (windowMain?() ?? (window?.isMainWindow == true))
-    }
-
     private func layoutFindBar() {
         let rect = findPageRect.map { convert($0, from: page) } ?? page.frame
         let width = min(380, rect.width)
@@ -774,7 +761,7 @@ public final class SidebarContainerView: NSView {
         for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(contextChanged), name: name, object: nil)
         }
-        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification, NSWindow.didBecomeMainNotification, NSWindow.didResignMainNotification, NSWindow.didMoveNotification] {
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification, NSWindow.didMoveNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(contextChanged), name: name, object: window)
         }
         for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
@@ -784,7 +771,6 @@ public final class SidebarContainerView: NSView {
         for name in [NSMenu.didBeginTrackingNotification, NSMenu.didEndTrackingNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(menuChanged(_:)), name: name, object: nil)
         }
-        updateActive()
         updateWindowMinimumWidth()
         processPointer()
     }
@@ -818,7 +804,6 @@ public final class SidebarContainerView: NSView {
             header.clearKeys()
             sidebar.clearShortcutKeys()
         }
-        updateActive()
         processPointer()
     }
     @objc private func windowClosed() {
