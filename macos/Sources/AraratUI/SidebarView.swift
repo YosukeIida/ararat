@@ -2040,7 +2040,21 @@ public final class SidebarView: NSView {
     }
     override public func hitTest(_ point: NSPoint) -> NSView? {
         guard !isScrollPreview, let hit = super.hitTest(point) else { return nil }
+        // A faded column part lies under the Library page while it slides, so it must not take the press.
+        if libraryOpenFraction > 0, isLibraryFadedColumnPart(hit) { return nil }
         return isWindowDragArea(hit) ? self : hit
+    }
+
+    /// The stack column's parts that stay put when a page slides: the Library page passes over them.
+    var libraryFadedColumnParts: [NSView] { [urlField, actionsRow, historyBanner, bottomBar] }
+
+    private func isLibraryFadedColumnPart(_ hit: NSView) -> Bool {
+        var view: NSView? = hit
+        while let current = view, current !== self {
+            if libraryFadedColumnParts.contains(where: { $0 === current }) { return true }
+            view = current.superview
+        }
+        return false
     }
 
     /// The sidebar's empty areas (P4, the owner's hands-on session 2026-11-15): a press there
@@ -2504,6 +2518,11 @@ public final class SidebarView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
+        // The Library page slides over the column's fixed parts; they fade out with it, because the
+        // Library draws no background of its own (LibraryView.updateFill) and would otherwise show
+        // the URL field, the dock and the actions through its list.
+        let columnAlpha = 1 - fraction
+        for view in libraryFadedColumnParts where view.alphaValue != columnAlpha { view.alphaValue = columnAlpha }
         effectiveAppearance.performAsCurrentDrawingAppearance {
             let look = libraryLookSpaceID.flatMap { id in snapshot.spaces.first { $0.id == id } } ?? snapshotSpace
             libraryButton.libraryFill.backgroundColor = SpaceAccent.resolve(look?.look, privateWindow: privateWindow)

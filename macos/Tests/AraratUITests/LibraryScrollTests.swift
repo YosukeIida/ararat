@@ -42,6 +42,38 @@ private func send(_ window: NSWindow, sidebar: SidebarView, x: CGFloat, dx: Int3
 }
 
 @Test @MainActor
+func librarySwipeFadesTheStaticColumnAndStopsItTakingPresses() async throws {
+    let (window, sidebar, container) = fixture(populated: false)
+    defer { window.contentView = nil }
+    let parts = sidebar.libraryFadedColumnParts
+    #expect(parts.count == 4 && parts.allSatisfy { $0.alphaValue == 1 })
+    let pitch = sidebar.bounds.width
+    #expect(pitch > 0)
+    // Half a page towards the Library: the follow offset is half the gesture's delta.
+    try send(window, sidebar: sidebar, x: 310, dx: Int32(pitch.rounded()), phase: .began, time: 100)
+    #expect(abs(sidebar.libraryOpenFraction - 0.5) < 0.01)
+    for part in parts { #expect(abs(part.alphaValue - 0.5) < 0.01) }
+    // The URL field (the first part) must not take that press.
+    let urlField = parts[0]
+    let inSidebar = sidebar.convert(NSPoint(x: urlField.bounds.midX, y: urlField.bounds.midY), from: urlField)
+    let hitPoint = try #require(sidebar.superview).convert(inSidebar, from: sidebar)
+    let duringSwipe = sidebar.hitTest(hitPoint)
+    #expect(duringSwipe == nil || !(duringSwipe === urlField || duringSwipe!.isDescendant(of: urlField)))
+    // A release with no velocity past the gesture window sends the page back.
+    try send(window, sidebar: sidebar, x: 310, phase: .ended, time: 101)
+    try await waitUntil { !sidebar.libraryOpen && sidebar.libraryOpenFraction == 0 }
+    #expect(parts.allSatisfy { $0.alphaValue == 1 })
+    let restored = try #require(sidebar.hitTest(hitPoint))
+    #expect(restored === urlField || restored.isDescendant(of: urlField))
+    container.layoutSubtreeIfNeeded()
+    // Library fully open: the column parts are hidden behind it; fully closed: back to full alpha.
+    sidebar.setLibraryOpen(true)
+    #expect(sidebar.libraryFadedColumnParts.allSatisfy { $0.alphaValue == 0 })
+    sidebar.setLibraryOpen(false)
+    #expect(sidebar.libraryFadedColumnParts.allSatisfy { $0.alphaValue == 1 })
+}
+
+@Test @MainActor
 func libraryPreviewReceivesTerminalEventsThroughActualHitTargets() throws {
     for populated in [false, true] {
         for cancelled in [false, true] {
