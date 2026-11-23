@@ -6,8 +6,12 @@ Arc の操作感と Yab の縦タブを Chromium の上に作る macOS ブラウ
 
 ## ad-hoc 署名ビルドのインストール
 
-ad-hoc 署名ビルドは Apple の公証を受けていないため、Gatekeeper が起動をブロックする。
-`Ararat.app` を `/Applications` に移動し、ターミナルで隔離属性を削除する。
+Stable は **Latest** が付いたリリースから取得できる。Stable に入る前の変更を
+試す場合は、**Pre-release** が付いた Preview を選ぶ。[GitHub Releases](https://github.com/YosukeIida/ararat/releases)
+
+ZIP を展開し、`Ararat.app` を `/Applications` に移動する。ad-hoc 署名ビルドは
+Apple の公証を受けていないため、Gatekeeper が起動をブロックする。ターミナルで
+隔離属性を削除する。
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Ararat.app

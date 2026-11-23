@@ -15,12 +15,12 @@ func updaterRequiresAConfiguredFeedAndPublicKey() throws {
     let key = Data(repeating: 0, count: 32).base64EncodedString()
     var info = ["SUFeedURL": "https://example.com/appcast.xml", "SUPublicEDKey": key]
     #expect(AppUpdates.channels(for: info) == [])
-    info["AraratUpdateChannel"] = "nightly"
-    #expect(AppUpdates.channels(for: info) == ["nightly"])
+    info["AraratUpdateChannel"] = "preview"
+    #expect(AppUpdates.channels(for: info) == ["preview"])
     info["SUFeedURL"] = "http://example.com/appcast.xml"
     #expect(AppUpdates.channels(for: info) == nil)
     info["SUFeedURL"] = "http://localhost:8765/appcast.xml"
-    #expect(AppUpdates.channels(for: info) == ["nightly"])
+    #expect(AppUpdates.channels(for: info) == ["preview"])
     info["SUPublicEDKey"] = "invalid"
     #expect(AppUpdates.channels(for: info) == nil)
 }

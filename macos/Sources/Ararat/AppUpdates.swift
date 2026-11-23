@@ -93,7 +93,7 @@ final class AppUpdates: NSObject, SPUUpdaterDelegate, NSMenuItemValidation, Sett
               url.scheme == "https" || (url.scheme == "http" && host == "localhost"),
               let key = info["SUPublicEDKey"] as? String,
               Data(base64Encoded: key)?.count == 32 else { return nil }
-        return info["AraratUpdateChannel"] as? String == "nightly" ? ["nightly"] : []
+        return info["AraratUpdateChannel"] as? String == "preview" ? ["preview"] : []
     }
 
     init(channels: Set<String>) {

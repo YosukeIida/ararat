@@ -4,6 +4,17 @@ import Testing
 @testable import AraratUI
 
 @Test(arguments: [
+    ("0.0.1" as String?, "Version 0.0.1 · built on Chromium"),
+    ("0.0.2-preview.1", "Version 0.0.2 Preview 1 · built on Chromium"),
+    ("0.0.0-dev", "Development build · built on Chromium"),
+    (nil, "Development build · built on Chromium"),
+])
+@MainActor
+func aboutVersionSubtitleUsesTheBundleVersion(version: String?, subtitle: String) {
+    #expect(SettingsModel.aboutVersionSubtitle(version) == subtitle)
+}
+
+@Test(arguments: [
     (SettingsUpdateState.unavailable, "Updates are unavailable", nil as String?),
     (.notChecked, "No recent update check", "Check for Updates"),
     (.upToDate(Date()), "Ararat is up to date", "Check for Updates"),
