@@ -9117,7 +9117,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
   }
 
   func organizeConditionNames(screen: Bool) -> [String] {
-    ["seed", "today_to_pinned", "pin_hint", "folder_open_nested_insert", "pinned_to_favorites", "dock_no_switch", "folder_drag_refused", "escape_cancel", "first_favorite_drop", "separate_favorites", "folder_hover_opens", "hover_drop"] + (screen ? ["drop_line_image", "favorite_images", "favorite_status_image"] : [])
+    ["seed", "today_to_pinned", "pin_hint", "folder_open_nested_insert", "pinned_to_favorites", "dock_no_switch", "folder_drag_refused", "escape_cancel", "first_favorite_drop", "separate_favorites", "folder_hover_opens", "folder_hover_refolds", "hover_drop"] + (screen ? ["drop_line_image", "favorite_images", "favorite_status_image"] : [])
   }
 
   func organizeCheckTick(_ host: any ARWindowHostAPI, screen: Bool) {
@@ -9270,20 +9270,32 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       organizeHoverStarted = ProcessInfo.processInfo.systemUptime
       guard begin("today", "organize-inner") else { return }
       browserCheckPhase = 85
-    case 85:
-      // The drag timer's own folderHoverDelay opens the folder while the drag is still held.
-      let innerOpen = space.pinned.first(where: { $0.id == "organize-inner" })?.collapsed == false
+    case 85, 851:
+      let innerOpen = sidebar.organizeCheckFolderOpen(id: "organize-inner")
+      let storedClosed = space.pinned.first(where: { $0.id == "organize-inner" })?.collapsed == true
+      let waited = ProcessInfo.processInfo.systemUptime - organizeHoverStarted
       let target = sidebar.resolveDropForCheck(position: sidebar.dragCheckPoint, draggedID: row("today")?.id ?? "")
-      if innerOpen && (target?.kind == "folder" || target?.kind == "insert") && target?.container == "organize-inner" {
+      if innerOpen && target?.kind == "folder" && target?.container == "organize-inner" {
         FileHandle.standardError.write(Data("ararat-trace: organize phase 85 hover opened target=\(target?.kind ?? "nil") container=\(target?.container ?? "nil") actual=\(sidebar.dragStateForCheck.drop)\n".utf8))
-        organizeConditions["folder_hover_opens"] = true
-        capture("hover-open")
+        if browserCheckPhase == 85 {
+          organizeConditions["folder_hover_opens"] = storedClosed && waited >= 0.6
+          capture("hover-open")
+          let head = sidebar.dragCheckPoint
+          sidebar.organizeCheckAim(at: CGPoint(x: head.x, y: 0))
+          let afterRefold = session.queue.sync { session.store?.snapshot(windowId: windowID) }
+          organizeConditions["folder_hover_refolds"] = sidebar.organizeCheckDragging
+            && !sidebar.organizeCheckFolderOpen(id: "organize-inner") && afterRefold == current
+          organizeHoverStarted = ProcessInfo.processInfo.systemUptime
+          sidebar.organizeCheckAim(at: head)
+          browserCheckPhase = 851
+          return
+        }
         guard sidebar.organizeCheckEnd() else { return }
         browserCheckPhase = 86
         return
       }
       // A held drag that never opens is a named failure, not a stall: 3 s is the VM's budget.
-      if ProcessInfo.processInfo.systemUptime - organizeHoverStarted > 3 {
+      if waited > 3 {
         FileHandle.standardError.write(Data("ararat-trace: organize phase 85 hover timeout open=\(innerOpen) target=\(target?.kind ?? "nil") container=\(target?.container ?? "nil") actual=\(sidebar.dragStateForCheck.drop) dragging=\(sidebar.organizeCheckDragging) shown=\(sidebar.spaceShown)\n".utf8))
         organizeConditions["folder_hover_opens"] = false
         _ = sidebar.organizeCheckEnd()
@@ -9294,6 +9306,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 86:
       guard sidebar.organizeCheckIdle else { return }
       organizeConditions["hover_drop"] = row("today")?.parentId == "organize-inner"
+        && space.pinned.first(where: { $0.id == "organize-inner" })?.collapsed == false
       let failed = organizeConditionNames(screen: screen).filter { organizeConditions[$0] != true }
       let values: [String: Any] = ["conditions": organizeConditions, "failed_conditions": failed, "images": organizeImages]
       finishBrowserCheck(ok: failed.isEmpty, values: values)

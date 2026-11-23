@@ -136,6 +136,15 @@ impl WorkspaceStore {
         snapshot(workspace, &window_id)
     }
 
+    pub fn folder_drag_rows(&self, window_id: String, folder_id: String) -> Vec<Row> {
+        let mut workspace = self.workspace.lock().unwrap().clone();
+        workspace.repair_tree();
+        if !workspace.items.get(&folder_id).is_some_and(|item| matches!(item.kind, ItemKind::Folder)) {
+            return Vec::new();
+        }
+        rows(&workspace, &folder_id, workspace.selected(&window_id))
+    }
+
     pub fn selected_item(&self, window_id: String) -> Option<String> {
         self.workspace.lock().unwrap().selected(&window_id).map(str::to_owned)
     }

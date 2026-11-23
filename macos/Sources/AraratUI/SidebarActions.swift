@@ -7,7 +7,7 @@ public final class SidebarActions {
     public var confirmFolderDeletion: ((Row, @escaping (Bool) -> Void) -> Void)?
     public var onSelect: ((Row) -> Void)?
     public var onMove: ((String, String, Int, Bool, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
-    public var onOpenFolder: ((String, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
+    var onFolderDragRows: ((String, @escaping ([Row]) -> Void) -> Void)?
     public var onClose: ((String) -> Void)?
     public var onCloseSelected: (() -> Void)?
     public var onArchive: ((String) -> Void)?
@@ -65,16 +65,9 @@ public final class SidebarActions {
                 }
             }
         }
-        onOpenFolder = { id, completion in
-            guard isActive() else { completion(nil); return }
-            adapter.openFolder(id: id) { result in
-                switch result {
-                case .success(let snapshot): record(snapshot); completion(snapshot)
-                case .failure(let error):
-                    FileHandle.standardError.write(Data("cannot open folder: \(error)\n".utf8))
-                    completion(nil)
-                }
-            }
+        onFolderDragRows = { id, completion in
+            guard isActive() else { completion([]); return }
+            adapter.folderDragRows(id: id) { completion((try? $0.get()) ?? []) }
         }
     }
 
@@ -87,7 +80,7 @@ public final class SidebarActions {
         sidebar.confirmFolderDeletion = confirmFolderDeletion
         sidebar.onSelect = onSelect
         sidebar.onMove = onMove
-        sidebar.onOpenFolder = onOpenFolder
+        sidebar.onFolderDragRows = onFolderDragRows
         sidebar.onClose = onClose
         sidebar.onCloseSelected = onCloseSelected
         sidebar.onArchive = onArchive

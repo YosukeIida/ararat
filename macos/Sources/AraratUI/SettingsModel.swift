@@ -249,6 +249,8 @@ public final class SettingsModel: ObservableObject {
             ("Ardia Apache-2.0 Licence", "Ardia-LICENSE.Apache-2.0"),
             ("Ardia NOTICE", "Ardia-NOTICE"),
             ("Cra MIT Licence", "Cra-LICENSE"),
+            ("Yab Apache-2.0 Licence", "Yab-LICENSE"),
+            ("Yab NOTICE", "Yab-NOTICE"),
             ("Sparkle Licence", "Sparkle-LICENSE"),
         ].compactMap { name, resource in
             bundle.url(forResource: resource, withExtension: "txt").map { (name, $0) }

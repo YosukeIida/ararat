@@ -1,3 +1,5 @@
+// Folder drag rules adapted from Yab's ColumnDrag.swift (Copyright 2026 Serafim Korablev).
+// Apache-2.0, see third_party/yab/LICENSE. Uses Ararat's pointer geometry and preview rows.
 import AppKit
 import AraratKit
 
@@ -24,8 +26,58 @@ struct SidebarDragState {
     let originFrame: CGRect
     var position: CGPoint
     var active = false
-    var hoverFolder: String?
-    var hoverStarted: TimeInterval?
+    var folderHover = SidebarFolderHover()
+    var sprungFolders: [(id: String, rows: [Row])] = []
+}
+
+struct SidebarFolderHover {
+    private(set) var folder: String?
+    private var started: TimeInterval?
+    private(set) var attempt = 0
+
+    mutating func aim(at folder: String?, now: TimeInterval) {
+        guard folder != self.folder else { return }
+        self.folder = folder
+        started = folder == nil ? nil : now
+        attempt += 1
+    }
+
+    mutating func ready(now: TimeInterval) -> String? {
+        guard let started, now - started >= SidebarDragMetrics.folderHoverDelay else { return nil }
+        self.started = nil
+        return folder
+    }
+}
+
+func sidebarSpringCandidate(drop: SidebarDrop, rows: [SidebarDragGeometry.Entry]) -> String? {
+    guard case .folder(let id) = drop, let row = rows.first(where: { $0.row.id == id })?.row,
+          row.collapsed, row.folderHasTabs else { return nil }
+    return id
+}
+
+func sidebarShouldRefold(want: CGFloat, last: CGFloat, landsInside: Bool) -> Bool {
+    !landsInside && (want < -0.8 || want > last + 1.5)
+}
+
+func sidebarAimsIntoSprung(want: CGFloat, alreadyAimingInside: Bool) -> Bool {
+    abs(want) <= (alreadyAimingInside ? 0.6 : 0.5)
+}
+
+func sidebarPreviewPinned(_ pinned: [Row], sprungFolders: [(id: String, rows: [Row])]) -> [Row] {
+    var pinned = pinned
+    for (id, children) in sprungFolders {
+        guard let head = pinned.firstIndex(where: { $0.id == id }), pinned[head].collapsed else { continue }
+        pinned[head].collapsed = false
+        let depth = pinned[head].depth + 1
+        let first = head + 1
+        let end = pinned[first...].firstIndex { $0.depth < depth } ?? pinned.endIndex
+        pinned.replaceSubrange(first..<end, with: children.map { row in
+            var row = row
+            row.depth += depth
+            return row
+        })
+    }
+    return pinned
 }
 
 struct SidebarDragGeometry {
@@ -37,6 +89,15 @@ struct SidebarDragGeometry {
     let rows: [Entry]
     let dock: [(space: SpaceSnapshot, frame: CGRect)]
     let space: SpaceSnapshot
+
+    func isWithin(_ id: String, folder: String) -> Bool {
+        var item = id
+        while item != folder {
+            guard let parent = space.pinned.first(where: { $0.id == item })?.parentId else { return false }
+            item = parent
+        }
+        return true
+    }
 }
 
 enum SidebarDrop: Equatable {
@@ -55,6 +116,19 @@ enum SidebarDrop: Equatable {
         case let .folder(id): (id, 0)
         case .refused, .split: nil
         }
+    }
+
+    var folder: String? {
+        if case .folder(let id) = self { return id }
+        return nil
+    }
+
+    func haptic(from previous: SidebarDrop, today: String) -> NSHapticFeedbackManager.FeedbackPattern? {
+        guard let move, let old = previous.move else { return nil }
+        if (folder != nil) != (previous.folder != nil) || (move.container == today) != (old.container == today) {
+            return .levelChange
+        }
+        return move != old ? .alignment : nil
     }
 }
 

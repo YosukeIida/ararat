@@ -167,21 +167,6 @@ func organizeCheckDrivesSeedThroughCore() throws {
     let result = store.snapshot(windowId: "organize")
     #expect(result.shownSpaceId == "organize-work")
     #expect(result.spaces.first { $0.id == "organize-other" }?.pinned.contains { $0.url == "about:blank?organize-dock" } == true)
-    var now = 10.0
-    sidebar.dragClock = { now }
-    sidebar.onOpenFolder = { id, completion in
-        do { completion(try store.setFolderCollapsed(windowId: "organize", id: id, collapsed: false)) }
-        catch { Issue.record("open folder: \(error)"); completion(nil) }
-    }
-    sidebar.update(snapshot: try store.setFolderCollapsed(windowId: "organize", id: "organize-inner", collapsed: true))
-    #expect(sidebar.organizeCheckBegin(id: today.id, destination: "organize-inner"))
-    now += 0.601
-    sidebar.stepDrag()
-    #expect(space().pinned.first { $0.id == "organize-inner" }?.collapsed == false)
-    let target = try #require(sidebar.resolveDropForCheck(position: sidebar.dragCheckPoint, draggedID: today.id))
-    #expect(target.kind == "folder" && target.container == "organize-inner")
-    #expect(sidebar.organizeCheckEnd())
-    #expect(try row("today").parentId == "organize-inner")
 }
 
 @MainActor
@@ -314,26 +299,150 @@ func refusedFolderDropAndEscapeNeverMoveOrLeaveDragState() throws {
     }
 }
 
-@Test @MainActor
-func folderHoverUsesInjectedClockAndOnlyOpensOnce() throws {
-    let (window, sidebar) = dragWindow()
-    defer { window.contentView = nil }
-    var now = 10.0
-    sidebar.dragClock = { now }
-    var opened: [String] = []
-    sidebar.onOpenFolder = { id, completion in opened.append(id); completion(nil) }
-    let row = try startDrag(sidebar, id: "a")
-    let nested = try #require(sidebar.dragGeometry()?.rows.first { $0.row.id == "nested" })
-    let point = CGPoint(x: nested.frame.midX, y: nested.frame.midY)
-    row.mouseDragged(with: try dragEvent(.leftMouseDragged, sidebar: sidebar, position: point))
-    now += 0.599
-    sidebar.stepDrag()
-    #expect(opened.isEmpty)
-    now += 0.002
-    sidebar.stepDrag()
-    sidebar.stepDrag()
-    #expect(opened == ["nested"])
-    sidebar.cancelOperation(nil)
+@Suite struct SidebarFolderDragTests {
+    @Test(arguments: [false, true]) @MainActor
+    func heldDragSpringsAndRestoresTheFolderUntilDropped(cancel: Bool) throws {
+        let directory = try testTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WorkspaceSession()
+        let windowID = "organize"
+        let folder = "organize-inner"
+        _ = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path,
+                              windowID: windowID, card: NSView(), seedOrganize: true, session: session)
+        let store = try #require(session.store)
+        let seeded = try #require(store.snapshot(windowId: windowID).spaces.first { $0.id == "organize-work" })
+        let child = try #require(seeded.pinned.first { $0.url == "about:blank?organize-folder" })
+        let source = try #require(seeded.today.first { $0.url == "about:blank?organize-today" })
+        _ = try store.moveItem(windowId: windowID, id: child.id, container: folder, index: 0, openFolder: false)
+        let initial = try store.selectItem(windowId: windowID, id: source.id)
+        func pinned(_ snapshot: WorkspaceSnapshot) -> [Row] {
+            snapshot.spaces.first { $0.id == "organize-work" }?.pinned ?? []
+        }
+        #expect(pinned(initial).first { $0.id == folder }?.collapsed == true)
+
+        let (window, sidebar) = dragWindow(seeded)
+        defer { window.contentView = nil }
+        sidebar.update(snapshot: initial)
+        var now = 10.0
+        sidebar.dragClock = { now }
+        sidebar.onFolderDragRows = { id, completion in
+            completion(store.folderDragRows(windowId: windowID, folderId: id))
+        }
+        sidebar.onMove = { id, container, index, open, completion in
+            #expect(!cancel && id == source.id && container == folder && open)
+            do { completion(try store.moveItem(windowId: windowID, id: id, container: container, index: UInt32(index), openFolder: open)) }
+            catch { Issue.record("move: \(error)"); completion(nil) }
+        }
+
+        let originFrame = try #require(sidebar.rowFrameForCheck(source.id))
+        let headFrame = try #require(sidebar.rowFrameForCheck(folder))
+        let head = CGPoint(x: headFrame.midX, y: headFrame.midY)
+        try #require(sidebar.beginDragForCheck(id: source.id, at: CGPoint(x: originFrame.midX, y: originFrame.midY)))
+        defer { sidebar.cancelOperation(nil) }
+        sidebar.moveDragForCheck(to: head)
+        now += 0.599
+        sidebar.stepDrag()
+        #expect(!sidebar.organizeCheckFolderOpen(id: folder))
+        now += 0.002
+        sidebar.stepDrag()
+        try #require(sidebar.organizeCheckFolderOpen(id: folder))
+        #expect(store.snapshot(windowId: windowID) == initial)
+
+        if cancel {
+            sidebar.cancelOperation(nil)
+            #expect(sidebar.organizeCheckIdle && !sidebar.organizeCheckFolderOpen(id: folder))
+            #expect(store.snapshot(windowId: windowID) == initial)
+            return
+        }
+
+        sidebar.organizeCheckAim(at: CGPoint(x: head.x, y: 0))
+        #expect(sidebar.organizeCheckDragging && !sidebar.organizeCheckFolderOpen(id: folder))
+        #expect(store.snapshot(windowId: windowID) == initial)
+        sidebar.moveDragForCheck(to: head)
+        now += 0.601
+        sidebar.stepDrag()
+        try #require(sidebar.organizeCheckFolderOpen(id: folder))
+        try #require(sidebar.releaseDragForCheck(at: head))
+        let dropped = pinned(store.snapshot(windowId: windowID))
+        #expect(dropped.first { $0.id == source.id }?.parentId == folder)
+        #expect(dropped.first { $0.id == folder }?.collapsed == false)
+    }
+
+    @Test func hoverRequiresAClosedFolderWithTabs() throws {
+        var folder = try #require(dragFixture().pinned.first { $0.id == "nested" })
+        let hit = SidebarDrop.folder(folder.id)
+        func candidate(_ drop: SidebarDrop) -> String? {
+            sidebarSpringCandidate(drop: drop, rows: [.init(row: folder, frame: .zero)])
+        }
+        #expect(candidate(hit) == nil)
+        folder.folderHasTabs = true
+        #expect(candidate(.insert(container: "folder", index: 0, lineY: 0, depth: 1)) == nil)
+        #expect(candidate(hit) == folder.id)
+        folder.collapsed = false
+        #expect(candidate(hit) == nil)
+    }
+
+    @Test func aimingAwayResetsThe600MillisecondDwell() {
+        var hover = SidebarFolderHover()
+        hover.aim(at: "folder", now: 0)
+        #expect(hover.ready(now: 0.599) == nil)
+        hover.aim(at: nil, now: 0.599)
+        #expect(hover.ready(now: 0.6) == nil)
+        hover.aim(at: "folder", now: 1)
+        hover.aim(at: "folder", now: 1.5)
+        #expect(hover.ready(now: 1.599) == nil)
+        #expect(hover.ready(now: 1.601) == "folder")
+        #expect(hover.ready(now: 2) == nil)
+    }
+
+    @Test func refoldAndFolderHeadUseTheYabThresholds() {
+        #expect(sidebarShouldRefold(want: -0.801, last: 2, landsInside: false))
+        #expect(!sidebarShouldRefold(want: -0.8, last: 2, landsInside: false))
+        #expect(!sidebarShouldRefold(want: 3.5, last: 2, landsInside: false))
+        #expect(sidebarShouldRefold(want: 3.501, last: 2, landsInside: false))
+        #expect(!sidebarShouldRefold(want: 3.501, last: 2, landsInside: true))
+        #expect(sidebarAimsIntoSprung(want: -0.5, alreadyAimingInside: false))
+        #expect(!sidebarAimsIntoSprung(want: 0.6, alreadyAimingInside: false))
+        #expect(sidebarAimsIntoSprung(want: 0.6, alreadyAimingInside: true))
+    }
+
+    @Test func previewRowsDoNotChangeTheStoreAndNestedDropsKeepTheirPathOpen() throws {
+        let directory = try testTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try WorkspaceStore.open(path: directory.appendingPathComponent("workspace.sqlite").path)
+        let window = "drag"
+        _ = try store.createSpace(windowId: window, name: "Work", spaceId: "work")
+        _ = try store.createFolder(windowId: window, id: "outer", name: "Outer", container: "work:pinned", index: 0, wrapping: [])
+        _ = try store.createFolder(windowId: window, id: "inner", name: "Inner", container: "outer", index: 0, wrapping: [])
+        let child = try #require(store.createTab(windowId: window, url: "about:blank?child").selectedId)
+        _ = try store.moveItem(windowId: window, id: child, container: "inner", index: 0, openFolder: false)
+        let source = try #require(store.createTab(windowId: window, url: "about:blank?source").selectedId)
+        _ = try store.setFolderCollapsed(windowId: window, id: "inner", collapsed: true)
+        let before = try store.setFolderCollapsed(windowId: window, id: "outer", collapsed: true)
+        let pinned = try #require(before.spaces.first?.pinned)
+        let outer = store.folderDragRows(windowId: window, folderId: "outer")
+        let inner = store.folderDragRows(windowId: window, folderId: "inner")
+        let preview = sidebarPreviewPinned(pinned, sprungFolders: [("outer", outer), ("inner", inner)])
+        #expect(preview.map(\.id) == ["outer", "inner", child])
+        #expect(preview.map(\.depth) == [0, 1, 2])
+        #expect(preview.allSatisfy { !$0.collapsed })
+        #expect(store.snapshot(windowId: window) == before)
+        let dropped = try store.moveItem(windowId: window, id: source, container: "inner", index: 1, openFolder: true)
+        #expect(dropped.spaces.first?.pinned.map(\.id) == ["outer", "inner", child, source])
+    }
+
+    @Test func hapticTracksLandingInsteadOfLinePosition() {
+        let pinned = SidebarDrop.insert(container: "pinned", index: 0, lineY: 10, depth: 0)
+        let shifted = SidebarDrop.insert(container: "pinned", index: 0, lineY: 20, depth: 0)
+        let reordered = SidebarDrop.insert(container: "pinned", index: 1, lineY: 20, depth: 0)
+        let today = SidebarDrop.insert(container: "today", index: 0, lineY: 20, depth: 0)
+        let folder = SidebarDrop.folder("folder")
+        #expect(shifted.haptic(from: pinned, today: "today") == nil)
+        #expect(reordered.haptic(from: pinned, today: "today") == .alignment)
+        #expect(today.haptic(from: pinned, today: "today") == .levelChange)
+        #expect(folder.haptic(from: pinned, today: "today") == .levelChange)
+        #expect(pinned.haptic(from: folder, today: "today") == .levelChange)
+    }
 }
 
 @Test @MainActor
@@ -773,7 +882,7 @@ private func dropPinBeforeSelection(staleSelection: String? = nil) throws -> (Si
     return (sidebar, dropped)
 }
 
-@Test(arguments: ["move", "moveIfLive", "openFolder", "edit"]) @MainActor
+@Test(arguments: ["move", "moveIfLive", "collapse", "edit"]) @MainActor
 func editRepliesKeepSelectionPublishedBeforeDelivery(route: String) async throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -830,7 +939,7 @@ func editRepliesKeepSelectionPublishedBeforeDelivery(route: String) async throws
     case "move":
         #expect(sidebar.organizeCheckBegin(id: id, destination: "organize-outer"))
         #expect(sidebar.organizeCheckEnd())
-    case "openFolder": actions.onOpenFolder?("organize-inner", receive)
+    case "collapse": actions.onItemEdit?(.collapse(id: "organize-inner", collapsed: false), receive)
     default: actions.onItemEdit?(.rename(id: id, title: "Renamed", folder: false), receive)
     }
     let selected = try session.queue.sync {
@@ -844,7 +953,7 @@ func editRepliesKeepSelectionPublishedBeforeDelivery(route: String) async throws
     let delivered = try #require(await iterator.next())
     #expect(delivered == selected)
     #expect(recorded == [id])
-    #expect(shown == (route == "openFolder" ? [] : [id]))
+    #expect(shown == [id])
     #expect(sidebar.selectedRowID == id)
     if route == "move" || route == "moveIfLive" {
         #expect(sidebar.organizeCheckHint(id: id))
