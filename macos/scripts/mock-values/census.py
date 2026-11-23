@@ -9,7 +9,7 @@ import re
 PROPERTY = re.compile(
     r"(?:[\w-]*(?:width|height|radius|color|shadow)|(?:row-|column-)?gap|"
     r"(?:padding|margin|inset)(?:-[\w-]+)?|font(?:-size|-weight)?|line-height|"
-    r"background(?:-[\w-]+)?|top|right|left|bottom|opacity|--[\w-]+)"
+    r"background(?:-[\w-]+)?|top|right|left|bottom|opacity|filter|--[\w-]+)"
 )
 DECLARATION = re.compile(r"(?:^|;)\s*([-\w]+)\s*:\s*((?:\([^)]*\)|[^;])*)")
 

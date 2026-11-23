@@ -180,6 +180,55 @@ func libraryRailTilesCentreTheIconAndLabelEightPointsApart() throws {
 }
 
 @Test @MainActor
+func libraryRailTilePressedDimsItsFillIconAndLabel() throws {
+    _ = NSApplication.shared
+    let library = LibraryView(frame: NSRect(x: 0, y: 0, width: 417, height: 720))
+    library.appearance = NSAppearance(named: .darkAqua)
+    library.showArchive()
+    let tile = try #require(libraryDescendants(library).compactMap { $0 as? LibraryRailTileButton }
+        .first { $0.accessibilityLabel() == "Archive page" })
+    func channels(_ color: NSColor?) throws -> [CGFloat] {
+        var resolved: NSColor?
+        tile.effectiveAppearance.performAsCurrentDrawingAppearance { resolved = color?.usingColorSpace(.sRGB) }
+        let rgb = try #require(resolved)
+        return [rgb.redComponent, rgb.greenComponent, rgb.blueComponent, rgb.alphaComponent]
+    }
+    func tileFill() throws -> [CGFloat] {
+        try channels(tile.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)))
+    }
+    let dim = LibraryView.railTilePressedBrightness
+    // `filter: brightness()` multiplies each sRGB channel and keeps alpha.
+    let half = try channels(LibraryRailTileButton.pressedColor(
+        NSColor(srgbRed: 0.5, green: 0.25, blue: 0.125, alpha: 0.4)))
+    #expect(abs(half[0] - 0.48) < 0.000_1 && abs(half[1] - 0.24) < 0.000_1)
+    #expect(abs(half[2] - 0.12) < 0.000_1 && abs(half[3] - 0.4) < 0.000_1)
+    let baseFill = try tileFill()
+    let baseText = try channels(tile.label.textColor)
+    #expect(baseText[0] > 0.9, "the dark appearance's text is light, so the dimming is visible")
+    #expect(try channels(tile.iconView.contentTintColor) == baseText)
+    tile.setPressed(true)
+    let pressedFill = try tileFill()
+    let pressedText = try channels(tile.label.textColor)
+    for index in 0..<3 {
+        #expect(abs(pressedFill[index] - baseFill[index] * dim) < 0.002)
+    }
+    #expect(pressedFill[3] == baseFill[3])
+    for index in 0..<3 {
+        #expect(abs(pressedText[index] - baseText[index] * dim) < 0.002)
+    }
+    #expect(try channels(tile.iconView.contentTintColor) == pressedText)
+    // An unselected tile has no fill to dim; its icon and label still dim.
+    library.showDownloads()
+    #expect(tile.layer?.backgroundColor == nil)
+    tile.setPressed(true)
+    #expect(tile.layer?.backgroundColor == nil)
+    #expect(abs((try channels(tile.label.textColor))[0] - baseText[0] * dim) < 0.002)
+    tile.setPressed(false)
+    #expect(try channels(tile.label.textColor) == baseText)
+    #expect(try channels(tile.iconView.contentTintColor) == baseText)
+}
+
+@Test @MainActor
 func clearArchiveButtonTracksTheWholeArchiveRatherThanSearchResults() {
     let library = LibraryView(frame: NSRect(x: 0, y: 0, width: 600, height: 500))
     #expect(!library.clearArchiveButton.isEnabled)

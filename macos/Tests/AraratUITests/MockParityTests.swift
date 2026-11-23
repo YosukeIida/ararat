@@ -66,6 +66,7 @@ final class MockParityTests: XCTestCase {
             "LibraryView.railTileGap": .number(LibraryView.railTileGap),
             "LibraryView.railTileHeight": .number(LibraryView.railTileHeight),
             "LibraryView.railTileIconSize": .number(LibraryView.railTileIconSize),
+            "LibraryView.railTilePressedBrightness": .number(LibraryView.railTilePressedBrightness),
             "LittleWindowMetrics.barHeight": .number(LittleWindowMetrics.barHeight),
             "LittleWindowMetrics.barBackground": .color(LittleWindowMetrics.barBackground),
             "LittleWindowMetrics.barText": .color(LittleWindowMetrics.barText),

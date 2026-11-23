@@ -4,9 +4,9 @@ The source is the owner's U20 project under `~/.config/herdr-agent-team/ararat/r
 
 ## Token and structure checks
 
-The [reviewed token table](research/mock-values.json) has 135 entries. The Swift suite compares 127 entries, including the selected shadow's offset, blur and opacity. The other 8 carry reasons in the table, including owner spacing decisions. The suite also checks the Library Downloads row pitch against the Arc measurement recorded in the table. One CSS declaration can map to several tokens or resolve differently in each appearance.
+The [reviewed token table](research/mock-values.json) has 135 entries. The Swift suite compares 128 entries, including the selected shadow's offset, blur and opacity. The other 7 carry reasons in the table, including owner spacing decisions. The suite also checks the Library Downloads row pitch against the Arc measurement recorded in the table. One CSS declaration can map to several tokens or resolve differently in each appearance.
 
-The CSS census found 27,782 candidate declarations across the 76 pages. Of these, 118 have a reviewed disposition and 27,664 still need triage. The census counts each combination of source file and line, selector, property and CSS value once, and verifies it against the source. Candidates include stylesheet rules shared by many boards, board annotations, inline variants, and unbuilt surfaces. The count gives an upper bound on the remaining declarations, and the number that needs a Swift mapping is still unknown.
+The CSS census found 27,870 candidate declarations across the 76 pages. Of these, 124 have a reviewed disposition and 27,746 still need triage. The census counts each combination of source file and line, selector, property and CSS value once, and verifies it against the source. Candidates include stylesheet rules shared by many boards, board annotations, inline variants, and unbuilt surfaces. The count gives an upper bound on the remaining declarations, and the number that needs a Swift mapping is still unknown.
 
 The ledger below has 113 element rows. Counting each row once by status gives 42 matches, 23 open differences, 29 fixes awaiting a VM recheck, 6 accepted differences, 3 that cannot be judged, 9 unbuilt, and 1 design decision with no board.
 
@@ -44,7 +44,7 @@ uv run --no-project python -B macos/scripts/mock-values/pair_pngs.py "$MOCK_PNG"
 ## Source discrepancies
 
 - `B-Split.dc.html:20` describes segments in its caption and depicts the selected split with a single row-level fill. The component drawing `A-TabRows.dc.html:79–82` defines the per-segment fill, and the Swift implementation follows that drawing. The inactive segment explicitly references the row hover CSS variable in both appearances.
-- [Architecture §7](architecture.md) and the Little Window code call the board's 46 pt height unmeasured. [Cra's Arc observations](research/arc-dia-components.md) and [the Yab comparison](research/yab-values.md#little-window) list 46 pt as the Arc value. The owner chose 48 pt on 2026-11-23; the bar stays at 48 pt and the mock board was changed to 48 px to match, so the token table now asserts it.
+- [Architecture §7](architecture.md) and the Little Window code call the board's 46 pt height unmeasured. [Cra's Arc observations](research/arc-dia-components.md) and [the Yab comparison](research/yab-values.md#little-window) list 46 pt as the Arc value. The owner chose 48 pt on 2026-11-23; the bar stays at 48 pt and the board still draws 46 px, so the token table records the owner's 48 pt with that reason and still compares the token against 48.
 
 ## Review ledger
 
