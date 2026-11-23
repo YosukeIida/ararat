@@ -12,10 +12,9 @@ validate_update_configuration() {
 }
 
 configure_updates() {
-  local plist="$1" channel="$2"
+  local plist="$1"
   plutil -insert SUFeedURL -string "$ARARAT_FEED_URL" "$plist"
   plutil -insert SUPublicEDKey -string "$ARARAT_ED_PUBLIC_KEY" "$plist"
-  plutil -insert AraratUpdateChannel -string "$channel" "$plist"
   plutil -replace SUVerifyUpdateBeforeExtraction -bool true "$plist"
   plutil -replace SURequireSignedFeed -bool true "$plist"
   plutil -replace SUSignedFeedFailureExpirationInterval -integer 0 "$plist"

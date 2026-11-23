@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'usage: %s --key-file <private-key-file> <stable|nightly> <build-version> <archive-dir>\n' "${0##*/}"
+  printf 'usage: %s --key-file <private-key-file> <stable|preview> <build-version> <archive-dir>\n' "${0##*/}"
 }
 die() { printf 'make-appcast: %s\n' "$*" >&2; exit 1; }
 
@@ -19,8 +19,8 @@ key_dir="$(cd -- "$(dirname -- "$2")" && pwd -P)"
 args=(--ed-key-file "$key" --versions "$4")
 case "$3" in
   stable) ;;
-  nightly) args+=(--channel nightly) ;;
-  *) die "expected stable or nightly update channel" ;;
+  preview) args+=(--channel preview) ;;
+  *) die "expected stable or preview update channel" ;;
 esac
 if [[ -n "${ARARAT_DOWNLOAD_URL_PREFIX:-}" ]]; then
   args+=(--download-url-prefix "$ARARAT_DOWNLOAD_URL_PREFIX")

@@ -24,9 +24,9 @@ try key.rawRepresentation.base64EncodedData().write(to: URL(fileURLWithPath: Com
 print(key.publicKey.rawRepresentation.base64EncodedString())
 SWIFT
 )"
-export ARARAT_ED_PUBLIC_KEY ARARAT_UPDATE_CHANNEL=nightly
-ARARAT_BUILD_VERSION=1000 "$scripts/bundle-app.sh" "$1" "$scratch/installed"
-ARARAT_BUILD_VERSION=1001 "$scripts/bundle-app.sh" "$1" "$scratch/candidate"
+export ARARAT_ED_PUBLIC_KEY
+ARARAT_VERSION=0.0.1-preview.1 ARARAT_BUILD_VERSION=1000 "$scripts/bundle-app.sh" "$1" "$scratch/installed"
+ARARAT_VERSION=0.0.1-preview.2 ARARAT_BUILD_VERSION=1001 "$scripts/bundle-app.sh" "$1" "$scratch/candidate"
 app="$scratch/installed/Ararat.app"
 plist="$app/Contents/Info.plist"
 [[ "$(plutil -extract CFBundleVersion raw -o - "$plist")" == 1000 ]]
@@ -36,9 +36,9 @@ CFFIXED_USER_HOME="$scratch/home" defaults write net.iodine2.ararat SUEnableAuto
 CFFIXED_USER_HOME="$scratch/home" defaults write net.iodine2.ararat SUAutomaticallyUpdate -bool true
 CFFIXED_USER_HOME="$scratch/home" defaults write net.iodine2.ararat SULastCheckTime -date '2000-01-01 00:00:00 +0000'
 ditto -c -k --keepParent "$scratch/candidate/Ararat.app" "$scratch/feed/Ararat-1001.zip"
-CFFIXED_USER_HOME="$scratch/home" "$scripts/make-appcast.sh" --key-file "$scratch/private-key" nightly 1001 "$scratch/feed"
+CFFIXED_USER_HOME="$scratch/home" "$scripts/make-appcast.sh" --key-file "$scratch/private-key" preview 1001 "$scratch/feed"
 rm -- "$scratch/private-key"
-grep -q '<sparkle:channel>nightly</sparkle:channel>' "$scratch/feed/appcast.xml"
+grep -q '<sparkle:channel>preview</sparkle:channel>' "$scratch/feed/appcast.xml"
 
 uv run --no-project python -m http.server 8765 --bind 127.0.0.1 --directory "$scratch/feed" > "$scratch/http.log" 2>&1 &
 server=$!

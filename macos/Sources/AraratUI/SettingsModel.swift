@@ -258,12 +258,19 @@ public final class SettingsModel: ObservableObject {
     }
     var openChromiumCredits: (() -> Void)?
 
+    static func aboutVersionSubtitle(_ version: String?) -> String {
+        guard let version, version != "0.0.0-dev" else {
+            return "Development build · built on Chromium"
+        }
+        if let preview = version.wholeMatch(of: /([0-9]+\.[0-9]+\.[0-9]+)-preview\.([1-9][0-9]*)/) {
+            return "Version \(preview.1) Preview \(preview.2) · built on Chromium"
+        }
+        return "Version \(version) · built on Chromium"
+    }
+
     var subtitle: String {
         if page == .about {
-            if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
-                return "Version \(version) · built on Chromium"
-            }
-            return "Development build · built on Chromium"
+            return Self.aboutVersionSubtitle(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
         }
         if let space { return "\(tabCountLabel(space)) · \(space.profileName)" }
         if case .site(_, let profile) = page {

@@ -4,18 +4,16 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 usage: bundle-app.sh [--release] <engine-app> <out-dir>
-       bundle-app.sh --from-artifact <dir> <out-dir>
 
 Builds an ad-hoc signed Ararat.app using the matching SwiftPM executable and
 Sparkle framework. ARARAT_FEED_URL and ARARAT_ED_PUBLIC_KEY enable updating.
-ARARAT_UPDATE_CHANNEL is stable (default) or nightly. ARARAT_BUILD_VERSION
-overrides CFBundleVersion and is required for builds that enable updating.
+ARARAT_VERSION sets the version and channel (X.Y.Z for stable,
+X.Y.Z-preview.N for preview). Unversioned builds use 0.0.0-dev.
+ARARAT_BUILD_VERSION overrides CFBundleVersion and is required for updates.
 ARARAT_CORRESPONDING_SOURCE_URL is the HTTPS address of the release source archive.
 
-With --release, use a clean release checkout, verify the engine tree against
-the recorded manifest and emit Corresponding Source before staging Ararat.app.
-With --from-artifact, use <dir>/out/Ararat/Chromium.app and verify
-<dir>/provenance.json against the current commit.
+With --release, set both version variables and use a clean checkout. The
+script verifies the engine tree and emits Corresponding Source before bundling.
 USAGE
 }
 
@@ -23,27 +21,40 @@ die() { printf 'bundle-app: %s\n' "$*" >&2; exit 1; }
 
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 release=0
-from_artifact=0
 if [[ "${1:-}" == --release ]]; then
   release=1
-  shift
-elif [[ "${1:-}" == --from-artifact ]]; then
-  from_artifact=1
   shift
 fi
 [[ $# == 2 ]] || { usage >&2; exit 2; }
 [[ -n "$2" ]] || die "empty out-dir"
 
-engine_path="$1"
-if [[ "$from_artifact" == 1 ]]; then
-  engine_path="$1/out/Ararat/Chromium.app"
-fi
-engine_app="$(cd -- "$engine_path" && pwd)"
-out_dir="$2"
-[[ -d "$engine_app/Contents/MacOS" ]] || die "no engine app: $engine_app"
-
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 package_dir="$(cd -- "$script_dir/.." && pwd)"
+release_version=0.0.0-dev
+release_channel=stable
+build_version="${ARARAT_BUILD_VERSION:-}"
+if [[ "${ARARAT_VERSION+x}" ]]; then
+  . "$script_dir/release-version.sh"
+  parse_release_tag "v$ARARAT_VERSION" || die "expected X.Y.Z or X.Y.Z-preview.N in ARARAT_VERSION"
+fi
+if [[ "$release" == 1 ]]; then
+  [[ -n "${ARARAT_VERSION:-}" && -n "$build_version" ]] ||
+    die "--release requires ARARAT_VERSION and ARARAT_BUILD_VERSION"
+  [[ "$build_version" =~ ^[0-9]+$ ]] || die "--release requires an integer ARARAT_BUILD_VERSION"
+fi
+if [[ -n "$build_version" && ! "$build_version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+  die "expected a numeric ARARAT_BUILD_VERSION"
+fi
+if [[ -n "${ARARAT_FEED_URL:-}" || -n "${ARARAT_ED_PUBLIC_KEY:-}" ]]; then
+  [[ -n "${ARARAT_FEED_URL:-}" && -n "${ARARAT_ED_PUBLIC_KEY:-}" && -n "$build_version" ]] ||
+    die "updates require ARARAT_FEED_URL, ARARAT_ED_PUBLIC_KEY and ARARAT_BUILD_VERSION"
+  . "$script_dir/configure-updates.sh"
+  validate_update_configuration
+fi
+
+engine_app="$(cd -- "$1" && pwd)"
+out_dir="$2"
+[[ -d "$engine_app/Contents/MacOS" ]] || die "no engine app: $engine_app"
 exe="$package_dir/.build/release/Ararat"
 
 # The engine's entitlements live in its source tree (the ad-hoc engine build
@@ -56,14 +67,6 @@ if [[ "$release" == 1 ]]; then
   env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin ARARAT_SRC_DIR="$engine_src" \
     ARARAT_BUILD_ROOT="$(dirname -- "$engine_src")" \
     /bin/bash "$package_dir/../engine/scripts/series-check" --release
-elif [[ "$from_artifact" == 1 ]]; then
-  provenance="$engine_src/provenance.json"
-  key="$(/bin/bash "$package_dir/../engine/scripts/engine-key")"
-  patch_state="$(git -C "$package_dir" show HEAD:engine/patch-state.sha256 | shasum -a 256 | cut -d ' ' -f 1)"
-  [[ "$(/usr/bin/plutil -extract engine_key raw -expect string -o - -- "$provenance")" == "$key" ]] ||
-    die "artifact engine_key differs from $key or is missing"
-  [[ "$(/usr/bin/plutil -extract patch_state_sha256 raw -expect string -o - -- "$provenance")" == "$patch_state" ]] ||
-    die "artifact patch_state_sha256 differs from the recorded manifest or is missing"
 elif [[ ! -x "$exe" ]]; then
   exe="$package_dir/.build/debug/Ararat"
 fi
@@ -77,19 +80,6 @@ done
 products_dir="$(cd -- "$(dirname -- "$exe")" && pwd -P)"
 sparkle="$products_dir/Sparkle.framework"
 [[ -d "$sparkle" ]] || die "missing Sparkle.framework in $products_dir"
-
-channel="${ARARAT_UPDATE_CHANNEL:-stable}"
-case "$channel" in stable|nightly) ;; *) die "expected stable or nightly update channel" ;; esac
-version="${ARARAT_BUILD_VERSION:-}"
-if [[ -n "$version" && ! "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
-  die "expected a numeric ARARAT_BUILD_VERSION"
-fi
-if [[ -n "${ARARAT_FEED_URL:-}" || -n "${ARARAT_ED_PUBLIC_KEY:-}" ]]; then
-  [[ -n "${ARARAT_FEED_URL:-}" && -n "${ARARAT_ED_PUBLIC_KEY:-}" && -n "$version" ]] ||
-    die "updates require ARARAT_FEED_URL, ARARAT_ED_PUBLIC_KEY and ARARAT_BUILD_VERSION"
-  . "$script_dir/configure-updates.sh"
-  validate_update_configuration
-fi
 
 if [[ "$release" == 1 ]]; then
   /bin/bash "$package_dir/../engine/scripts/corresponding-source" "$out_dir/Ararat-source"
@@ -127,15 +117,18 @@ framework_version="$(plutil -extract CFBundleShortVersionString raw -expect stri
 [[ -f "$app/Contents/Frameworks/Chromium Framework.framework/Versions/$framework_version/Chromium Framework" ]] ||
   die "missing Chromium framework for version $framework_version"
 plutil -insert AraratChromiumVersion -string "$framework_version" "$plist"
-plutil -replace CFBundleShortVersionString -string 0.0.1 "$plist"
+plutil -replace CFBundleShortVersionString -string "$release_version" "$plist"
 
 for key in SUFeedURL SUPublicEDKey AraratUpdateChannel SURequireSignedFeed SUVerifyUpdateBeforeExtraction SUSignedFeedFailureExpirationInterval; do
   if plutil -extract "$key" xml1 -o /dev/null "$plist" 2>/dev/null; then
     plutil -remove "$key" "$plist"
   fi
 done
-if [[ -n "$version" ]]; then
-  plutil -replace CFBundleVersion -string "$version" "$plist"
+if [[ "$release_channel" == preview ]]; then
+  plutil -insert AraratUpdateChannel -string "$release_channel" "$plist"
+fi
+if [[ -n "$build_version" ]]; then
+  plutil -replace CFBundleVersion -string "$build_version" "$plist"
 fi
 if [[ -n "${ARARAT_CORRESPONDING_SOURCE_URL:-}" ]]; then
   [[ "$ARARAT_CORRESPONDING_SOURCE_URL" == https://?* ]] || die "set an HTTPS source archive URL"
@@ -144,7 +137,7 @@ elif [[ "$release" == 1 ]]; then
   plutil -insert AraratLocalCorrespondingSource -bool true "$plist"
 fi
 if [[ -n "${ARARAT_FEED_URL:-}" ]]; then
-  configure_updates "$plist" "$channel"
+  configure_updates "$plist"
 fi
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/bundle-app.XXXXXX")"
