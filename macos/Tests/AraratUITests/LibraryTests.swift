@@ -31,9 +31,9 @@ func libraryButtonEscapeAndRestorePreserveUserWidthAndLastPage() throws {
     library.appearance = NSAppearance(named: .aqua)
     let plus = try #require(libraryDescendants(sidebar).compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "New Space menu" })
     #expect(!sidebar.convert(library.clearArchiveButton.bounds, from: library.clearArchiveButton).intersects(plus.frame))
-    let archive = try #require(libraryDescendants(library).compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "Archive page" })
-    #expect(archive.imagePosition == .imageAbove && archive.image != nil)
-    #expect(library.downloadsButton.imagePosition == .imageAbove && library.downloadsButton.image != nil)
+    let archive = try #require(libraryDescendants(library).compactMap { $0 as? LibraryRailTileButton }.first { $0.accessibilityLabel() == "Archive page" })
+    #expect(archive.iconView.image != nil && archive.label.stringValue == "Archive")
+    #expect(library.downloadsButton.iconView.image != nil && library.downloadsButton.label.stringValue == "Downloads")
     #expect(archive.accessibilityValue() as? String == "selected")
     #expect(archive.layer?.backgroundColor == LibraryView.lightSelectedTileFill.cgColor)
     library.showDownloads()
@@ -157,6 +157,26 @@ func sidebarScrollOpensLibraryStaysOpenAndScrollsBackToFirstSpace() async throws
     sidebar.scrollWheel(with: event(0, .ended, 102.2))
     #expect(!sidebar.libraryOpen && sidebar.spaceShown == 0)
     #expect(container.resizeHandle.sidebarWidth == SidebarMetrics.defaultWidth)
+}
+
+@Test @MainActor
+func libraryRailTilesCentreTheIconAndLabelEightPointsApart() throws {
+    _ = NSApplication.shared
+    let library = LibraryView(frame: NSRect(x: 0, y: 0, width: 417, height: 720))
+    library.layoutSubtreeIfNeeded()
+    let tiles = libraryDescendants(library).compactMap { $0 as? LibraryRailTileButton }
+    #expect(tiles.count == 2)
+    for tile in tiles {
+        let icon = tile.convert(tile.iconView.bounds, from: tile.iconView)
+        let label = tile.convert(tile.label.bounds, from: tile.label)
+        let left = min(icon.minX, label.minX), right = max(icon.maxX, label.maxX)
+        let near = min(icon.minY, label.minY), far = max(icon.maxY, label.maxY)
+        #expect(tile.bounds.height == LibraryView.railTileHeight)
+        #expect(icon.width == LibraryView.railTileIconSize && icon.height == LibraryView.railTileIconSize)
+        #expect(abs(far - near - icon.height - label.height - LibraryView.railTileContentGap) <= 1)
+        #expect(abs((near + far) / 2 - tile.bounds.midY) <= 1)
+        #expect(abs((left + right) / 2 - tile.bounds.midX) <= 1)
+    }
 }
 
 @Test @MainActor

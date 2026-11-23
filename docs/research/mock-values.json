@@ -79,6 +79,7 @@
   {"source": "B-Library.dc.html:25", "selector": "<button style>", "property": "height", "css": "80px", "swift": "LibraryView.railTileHeight", "expected": 80},
   {"source": "B-Library.dc.html:25", "selector": "<button style>", "property": "height", "css": "80px", "swift": "LibraryView.railTileGap", "expected": 20, "reason": "The 80 pt tile follows Arc's measured 100 pt rail pitch, leaving 20 pt between tiles."},
   {"source": "B-Library.dc.html:25", "selector": "<button style>", "property": "height", "css": "80px", "swift": "LibraryView.railTileIconSize", "expected": 22, "reason": "The SVG inside the 80 pt button declares 22 × 22 pt in its width and height attributes."},
+  {"source": "B-Library.dc.html:25", "selector": "<button style>", "property": "gap", "css": "8px", "swift": "LibraryView.railTileContentGap", "expected": 8},
   {"source": "B-Library.dc.html:25", "selector": "<button style>", "property": "top", "css": "46px", "swift": "SidebarMetrics.libraryContentTop", "expected": 46},
   {"source": "B-Library.dc.html:25", "selector": "<button style>", "property": "background", "css": "#FFFFFF", "swift": "LibraryView.lightSelectedTileFill", "expected": [1, 1, 1, 1]},
   {"source": "B-LibraryStates.dc.html:18", "selector": "<button style>", "property": "background", "css": "rgba(255,255,255,0.13)", "swift": "LibraryView.darkSelectedTileFill", "expected": [1, 1, 1, 0.13]},

@@ -62,6 +62,7 @@ final class MockParityTests: XCTestCase {
             "EmptyPageHints.lightCardFill": .color(EmptyPageHints.lightCardFill),
             "LibraryView.darkSelectedTileFill": .color(LibraryView.darkSelectedTileFill),
             "LibraryView.lightSelectedTileFill": .color(LibraryView.lightSelectedTileFill),
+            "LibraryView.railTileContentGap": .number(LibraryView.railTileContentGap),
             "LibraryView.railTileGap": .number(LibraryView.railTileGap),
             "LibraryView.railTileHeight": .number(LibraryView.railTileHeight),
             "LibraryView.railTileIconSize": .number(LibraryView.railTileIconSize),

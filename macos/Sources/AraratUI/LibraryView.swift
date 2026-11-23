@@ -5,6 +5,7 @@ import AraratKit
 final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     static let railTileHeight: CGFloat = 80
     static let railTileIconSize: CGFloat = 22
+    static let railTileContentGap: CGFloat = 8
     static let railTileGap: CGFloat = 20
     static let lightSelectedTileFill = NSColor.white
     static let darkSelectedTileFill = NSColor.white.withAlphaComponent(0.13)
@@ -51,8 +52,8 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
     private let search = ArchiveSearchField()
     private let back = SidebarDockButton()
     let clearArchiveButton = SidebarDockButton(title: "Clear Archive…", target: nil, action: nil)
-    private let archiveButton = NSButton(title: Page.archive.rawValue, target: nil, action: nil)
-    let downloadsButton = NSButton(title: Page.downloads.rawValue, target: nil, action: nil)
+    private let archiveButton = LibraryRailTileButton(title: Page.archive.rawValue, symbol: "archivebox")
+    let downloadsButton = LibraryRailTileButton(title: Page.downloads.rawValue, symbol: "arrow.down.to.line")
     let downloadsPage = DownloadsPageView(frame: .zero)
     private let archiveContent = NSView()
     private let now: () -> Date
@@ -77,18 +78,7 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
         archiveContent.setAccessibilityRole(.group)
         downloadsButton.target = self
         downloadsButton.action = #selector(showDownloads)
-        for (button, symbol) in [(archiveButton, "archivebox"), (downloadsButton, "arrow.down.to.line")] {
-            button.isBordered = false
-            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: Self.railTileIconSize, weight: .regular))
-            button.imagePosition = .imageAbove
-            button.alignment = .center
-            button.font = .systemFont(ofSize: SidebarMetrics.libraryFontSize, weight: .semibold)
-            button.wantsLayer = true
-            button.layer?.cornerRadius = SidebarMetrics.cornerRadius
-            button.setAccessibilityLabel("\(button.title) page")
-            rail.addSubview(button)
-        }
+        for button in [archiveButton, downloadsButton] { rail.addSubview(button) }
         let divider = NSView()
         divider.wantsLayer = true
         divider.layer?.backgroundColor = NSColor.separatorColor.cgColor
@@ -516,6 +506,63 @@ final class LibraryView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, N
             }
         }
     }
+}
+
+/// A Library rail tile: the icon and label are one group centred in the 80 pt tile, 8 pt apart, as
+/// `B-Library.dc.html:25` draws them. Why not `.imageAbove`: AppKit pins the 22 pt image near the
+/// tile's top edge and the title near the bottom, which left the group high and 30 pt apart.
+final class LibraryRailTileButton: NSButton {
+    let iconView = LibraryRailTileIconView()
+    let label = NSTextField(labelWithString: "")
+    private let content = NSStackView()
+
+    init(title: String, symbol: String) {
+        super.init(frame: .zero)
+        isBordered = false
+        self.title = ""
+        wantsLayer = true
+        layer?.cornerRadius = SidebarMetrics.cornerRadius
+        setAccessibilityLabel("\(title) page")
+        iconView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: LibraryView.railTileIconSize, weight: .regular))
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.setAccessibilityHidden(true)
+        label.stringValue = title
+        label.font = .systemFont(ofSize: SidebarMetrics.libraryFontSize, weight: .semibold)
+        // Why not the mock's #1D1D1F: the tile keeps the button title colour the rail used before.
+        label.textColor = .controlTextColor
+        label.setAccessibilityHidden(true)
+        content.orientation = .vertical
+        content.alignment = .centerX
+        content.spacing = LibraryView.railTileContentGap
+        content.addArrangedSubview(iconView)
+        content.addArrangedSubview(label)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.centerXAnchor.constraint(equalTo: centerXAnchor),
+            content.centerYAnchor.constraint(equalTo: centerYAnchor),
+            content.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor),
+            content.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: LibraryView.railTileIconSize),
+            iconView.heightAnchor.constraint(equalToConstant: LibraryView.railTileIconSize),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    /// Why not AppKit's own hit testing: the icon and label are subviews now, and a press on them
+    /// must still reach the tile's button cell.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        super.hitTest(point) == nil ? nil : self
+    }
+}
+
+/// The tile's icon box is 22 pt square like the mock's SVG. Why not a plain `NSImageView`: its
+/// alignment rect drops the image's spare height, so the stacked frame no longer matches the box.
+final class LibraryRailTileIconView: NSImageView {
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 }
 
 class SidebarDockButton: NSButton {

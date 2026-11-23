@@ -77,6 +77,34 @@ def check(rule, capture):
             gaps = [panel["x"] - owner["x"], panel["y"] - owner["y"],
                     owner["y"] + owner["height"] - panel["y"] - panel["height"]]
             return all(abs(gap - rule["inset"]) <= 1 for gap in gaps)
+        case "library-tile":
+            tiles = by_class("LibraryRailTileButton")
+            if len(tiles) != rule["tiles"]:
+                return False
+
+            def frames_inside(tile, name):
+                return [path[-1]["frame"] for path in paths
+                        if path[-1]["class"] == name and any(ancestor is tile[-1] for ancestor in path[:-1])]
+
+            for tile in tiles:
+                icons, labels = frames_inside(tile, "LibraryRailTileIconView"), frames_inside(tile, "NSTextField")
+                if len(icons) != 1 or len(labels) != 1:
+                    return False
+                icon, label = icons[0], labels[0]
+                tile_frame = tile[-1]["frame"]
+                left = min(icon["x"], label["x"])
+                right = max(icon["x"] + icon["width"], label["x"] + label["width"])
+                bottom = min(icon["y"], label["y"])
+                top = max(icon["y"] + icon["height"], label["y"] + label["height"])
+                if abs((left + right) / 2 - (tile_frame["x"] + tile_frame["width"] / 2)) > 1:
+                    return False
+                if abs((bottom + top) / 2 - (tile_frame["y"] + tile_frame["height"] / 2)) > 1:
+                    return False
+                clearance = max(icon["y"], label["y"]) - min(icon["y"] + icon["height"],
+                                                             label["y"] + label["height"])
+                if abs(clearance - rule["gap"]) > 1:
+                    return False
+            return True
         case "contains":
             def matches(node, selector):
                 return all(node.get(key) == value for key, value in selector.items())
