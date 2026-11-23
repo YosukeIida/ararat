@@ -272,7 +272,6 @@ private func windowedSidebar(selected: Bool = false, look: Look? = nil, windowWi
     let container = SidebarContainerView(sidebar: sidebar, page: NSView())
     container.applicationActive = { true }
     container.windowKey = { true }
-    container.windowMain = { true }
     container.pressedButtons = { 0 }
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: windowWidth, height: 720),
                           styleMask: [], backing: .buffered, defer: false)
@@ -335,7 +334,7 @@ func aWindowNarrowerThanTheRuleGrowsOnTheNextLayout() {
 }
 
 @Test @MainActor
-func inactiveWindowDropsTheSpaceTintAndKeepsTheBackdropAndItsText() {
+func sidebarKeepsItsLookWhenTheWindowOrAppDeactivates() {
     let darkLook = Look(colors: [LookColor(red: 0.05, green: 0.05, blue: 0.05, x: 0.5, y: 0.5)],
                         opacity: 1, grain: 0.5, glass: false, appearance: .auto)
     let (window, sidebar, container, panel) = windowedSidebar(selected: true, look: darkLook)
@@ -343,57 +342,25 @@ func inactiveWindowDropsTheSpaceTintAndKeepsTheBackdropAndItsText() {
     panel.systemAppearance = { NSAppearance(named: .aqua)! }
     panel.reduceTransparency = { false }
     panel.updateLook(darkLook, darkLook, fraction: 0)
-    #expect(panel.active)
     #expect(!panel.coating.isHidden)
-    // An Auto look with a dark colour draws light text over the tint.
     #expect(sidebar.appearance == NSAppearance(named: .darkAqua))
-    var active = true
-    container.applicationActive = { active }
-    active = false
-    NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
-    #expect(!panel.active)
-    #expect(panel.coating.isHidden)
     #expect(!panel.vibrancy.isHidden)
     #expect(panel.vibrancy.material == .sidebar)
-    // With the colour layer gone the text follows the vibrancy's appearance, which Auto leaves to the system.
-    #expect(sidebar.appearance == nil)
-    active = true
-    NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
-    #expect(panel.active)
-    #expect(!panel.coating.isHidden)
-    #expect(sidebar.appearance == NSAppearance(named: .darkAqua))
-    if #available(macOS 26.0, *) {
-        let glassLook = Look(colors: [LookColor(red: 0, green: 0, blue: 1, x: 0.5, y: 0.5)],
-                             opacity: 0, grain: 0, glass: true, appearance: .auto)
-        panel.updateLook(glassLook, glassLook, fraction: 0)
-        #expect(panel.subviews.compactMap { $0 as? NSGlassEffectView }.contains { !$0.isHidden })
-        active = false
-        NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
-        #expect(!panel.active)
-        #expect(panel.coating.isHidden)
-        #expect(panel.subviews.compactMap { $0 as? NSGlassEffectView }.contains { !$0.isHidden })
-    }
-}
+    #expect(panel.vibrancy.state == .active)
+    let color = panel.checkDrawnColor
 
-@Test @MainActor
-func commandBarTakingKeyLeavesTheSpaceTintAlone() {
-    let look = Look(colors: [LookColor(red: 1, green: 0, blue: 0, x: 0.5, y: 0.5)],
-                    opacity: 1, grain: 0.5, glass: false, appearance: .auto)
-    let (window, _, container, panel) = windowedSidebar(selected: true, look: look)
-    defer { window.contentView = nil }
-    #expect(panel.active && !panel.coating.isHidden)
-    // The command bar is a child panel; the browser window resigns key and stays main.
     container.windowKey = { false }
     NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
-    #expect(panel.active)
-    #expect(!panel.coating.isHidden)
-    // Another window taking main is what makes this one inactive.
-    container.windowMain = { false }
     NotificationCenter.default.post(name: NSWindow.didResignMainNotification, object: window)
-    #expect(!panel.active)
-    #expect(panel.coating.isHidden)
-    container.windowMain = { true }
-    NotificationCenter.default.post(name: NSWindow.didBecomeMainNotification, object: window)
-    #expect(panel.active)
     #expect(!panel.coating.isHidden)
+    #expect(panel.checkDrawnColor == color)
+    #expect(panel.grain.opacity == 0.5)
+    #expect(sidebar.appearance == NSAppearance(named: .darkAqua))
+
+    container.applicationActive = { false }
+    NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+    #expect(!panel.coating.isHidden)
+    #expect(panel.checkDrawnColor == color)
+    #expect(panel.grain.opacity == 0.5)
+    #expect(sidebar.appearance == NSAppearance(named: .darkAqua))
 }

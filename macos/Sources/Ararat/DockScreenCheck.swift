@@ -30,7 +30,7 @@ final class DockScreenCheck {
     var details: [String: Any] = [:]
 
     static func conditionNames(screen: Bool) -> [String] {
-        ["seed", "cells", "wheel_input", "wheel_start", "wheel_settled", "favorites_before", "favorites_mid", "favorites_after", "library_open", "library_closed", "menu", "new_folder", "refused", "escape", "drop_refused", "drop_duration", "tint_initial", "tint_inactive", "tint_active", "minimum_docked", "minimum_hidden", "delete_space_sheet", "delete_space_count", "delete_space_shown", "delete_space_profile", "space_settings_page"] + (screen ? ["wheel_mid", "capture_cells", "capture_mid", "capture_refused", "capture_delete_space", "capture_space_settings"] : ["follow_mid"])
+        ["seed", "cells", "wheel_input", "wheel_start", "wheel_settled", "favorites_before", "favorites_mid", "favorites_after", "library_open", "library_closed", "menu", "new_folder", "refused", "escape", "drop_refused", "drop_duration", "tint_initial", "minimum_docked", "minimum_hidden", "delete_space_sheet", "delete_space_count", "delete_space_shown", "delete_space_profile", "space_settings_page"] + (screen ? ["tint_inactive", "tint_active", "wheel_mid", "capture_cells", "capture_mid", "capture_refused", "capture_delete_space", "capture_space_settings"] : ["follow_mid"])
     }
     static func conditionResults(_ conditions: [String: Bool], screen: Bool) -> (values: [String: Bool], failed: [String]) {
         let names = conditionNames(screen: screen)
@@ -105,7 +105,7 @@ extension Runtime {
                 "sidebar_mode": container?.sidebarState as Any? ?? NSNull(),
                 "window_key": host?.window().isKeyWindow ?? false, "window_main": host?.window().isMainWindow ?? false,
                 "first_responder": host?.window().firstResponder.map { NSStringFromClass(type(of: $0)) } as Any? ?? NSNull(),
-                "images": check?.images ?? [:], "activation_simulated": !screen,
+                "images": check?.images ?? [:],
                 "mid_source": screen ? "wheel" : "trackpad_follow"]
     }
 
@@ -311,27 +311,25 @@ extension Runtime {
             let space = current.spaces.first { $0.id == check.selectedSpace }
             check.report("drop_refused", space?.today.contains { $0.url == "about:blank?dock-drag" } == true && current.shownSpaceId == check.selectedSpace)
             check.report("minimum_docked", abs(window.contentMinSize.width - (sidebar.bounds.width + 250)) < 0.01)
-            if !screen { container.dockCheckSetMain(true) }
             browserCheckPhase = 12
         case 12:
             guard container.spaceTintVisible, !screen || window.isKeyWindow else { return }
             check.report("tint_initial", true)
+            guard screen else { browserCheckPhase = 8; return }
             FileHandle.standardError.write(Data("ararat-trace: dock switch window inactive\n".utf8))
-            if screen {
-                let other = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
-                check.otherWindow = other
-                other.makeKeyAndOrderFront(nil)
-            } else { container.dockCheckSetMain(false) }
+            let other = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+            check.otherWindow = other
+            other.makeKeyAndOrderFront(nil)
             browserCheckPhase = 7
         case 7:
-            guard !container.spaceTintVisible, !screen || !window.isKeyWindow else { return }
-            check.report("tint_inactive", true)
+            guard !window.isMainWindow else { return }
+            check.report("tint_inactive", container.spaceTintVisible)
             FileHandle.standardError.write(Data("ararat-trace: dock switch window active\n".utf8))
-            if screen { window.makeKeyAndOrderFront(nil) } else { container.dockCheckSetMain(true) }
+            window.makeKeyAndOrderFront(nil)
             browserCheckPhase += 1
         case 8:
-            guard container.spaceTintVisible, !screen || window.isKeyWindow else { return }
-            check.report("tint_active", true)
+            guard !screen || window.isKeyWindow else { return }
+            if screen { check.report("tint_active", container.spaceTintVisible) }
             FileHandle.standardError.write(Data("ararat-trace: dock toggle sidebar\n".utf8))
             container.toggleSidebar()
             container.layoutSubtreeIfNeeded()
