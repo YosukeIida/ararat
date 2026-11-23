@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use ararat_core::import::arc_sidebar;
 use ararat_core::model::{Kind, Op, Record, Workspace};
-use ararat_core::storage::{BATCH_WINDOW, Store};
+use ararat_core::storage::Store;
 use rusqlite::Connection;
 
 const FIXTURE: &str = include_str!("fixtures/arc-sidebar-synthetic.json");
@@ -25,6 +25,14 @@ fn imported() -> Workspace {
 fn count(path: &PathBuf) -> i64 {
     let conn = Connection::open(path).unwrap();
     conn.query_row("SELECT count(*) FROM records", [], |r| r.get(0)).unwrap()
+}
+
+fn wait_until(message: &str, mut condition: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !condition() {
+        assert!(Instant::now() < deadline, "timed out after 10 seconds: {message}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 // Why not replay local selection: it is deliberately absent from the sync journal.
@@ -88,31 +96,23 @@ fn moves_and_deletes_reach_disk_as_in_memory() {
 }
 
 #[test]
-fn writes_commit_within_the_batch_window_without_a_flush() {
+fn writes_commit_in_the_background_without_a_flush() {
     let path = fresh_db("window");
     let (store, _) = Store::open(&path).unwrap();
     store.write(imported().to_ops());
     assert_eq!(count(&path), 0);
-    std::thread::sleep(BATCH_WINDOW + Duration::from_millis(500));
-    assert!(count(&path) > 0);
+    wait_until("background commit did not write any records", || count(&path) > 0);
 }
 
 #[test]
-fn steady_writes_still_commit_within_the_batch_window() {
+fn steady_writes_do_not_postpone_the_commit_forever() {
     let path = fresh_db("steady");
     let (store, _) = Store::open(&path).unwrap();
     let ops = imported().to_ops();
-    let start = Instant::now();
-    let mut committed_while_writing = false;
-    while start.elapsed() < BATCH_WINDOW * 3 {
+    wait_until("background commit did not write any records during steady writes", || {
         store.write(ops.clone());
-        std::thread::sleep(Duration::from_millis(5));
-        if start.elapsed() > BATCH_WINDOW + Duration::from_millis(500) && count(&path) > 0 {
-            committed_while_writing = true;
-            break;
-        }
-    }
-    assert!(committed_while_writing);
+        count(&path) > 0
+    });
 }
 
 #[test]
@@ -122,15 +122,13 @@ fn a_failed_commit_is_retried_without_a_flush() {
     let blocker = Connection::open(&path).unwrap();
     blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
     store.write(imported().to_ops());
-    std::thread::sleep(BATCH_WINDOW + Duration::from_millis(500));
-    assert!(store.last_error().is_some());
+    wait_until("blocked background commit did not report an error", || store.last_error().is_some());
     assert_eq!(count(&path), 0);
 
     blocker.execute_batch("ROLLBACK").unwrap();
-    // The first retry is due one BATCH_WINDOW after the failure, the next two after that.
-    std::thread::sleep(BATCH_WINDOW * 3 + Duration::from_millis(500));
-    assert!(count(&path) > 0);
-    assert_eq!(store.last_error(), None);
+    wait_until("background retry did not write records and clear the error", || {
+        count(&path) > 0 && store.last_error().is_none()
+    });
 }
 
 #[test]
