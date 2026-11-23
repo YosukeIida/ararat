@@ -572,14 +572,11 @@ impl Workspace {
         if self.item_profile(&item.id) != self.item_profile(container) {
             return Err(EditError("cannot move across profiles".into()));
         }
-        let open_folder = open_folder && matches!(self.items[container].kind, ItemKind::Folder)
-            && self.folder_collapsed.get(container).copied().unwrap_or(false);
+        let folder_ops = if open_folder { self.expand_ancestors(Some(container)) } else { Vec::new() };
         let same_parent = item.membership.parent.as_deref() == Some(container);
         if same_parent && self.children(container).into_iter().filter(|i| matches!(i.lifecycle, Lifecycle::Open | Lifecycle::Unloaded))
             .position(|i| i.id == item.id) == Some(index) {
-            return if open_folder {
-                self.set_folder_collapsed(container, false)
-            } else { Ok(Vec::new()) };
+            return Ok(self.commit_edit(folder_ops));
         }
         let entering_today = !self.list_for(&item.id).is_some_and(|(_, today)| today)
             && self.list_for(container).is_some_and(|(_, today)| today);
@@ -590,9 +587,7 @@ impl Workspace {
         ops.push(Op::Put(Record::Item(item)));
         for op in &ops { self.apply(op); }
         if entering_today { ops.extend(self.stamp_selection(&id, now)); }
-        if open_folder {
-            ops.extend(self.set_folder_collapsed(container, false)?);
-        }
+        ops.extend(self.commit_edit(folder_ops));
         Ok(ops)
     }
 

@@ -1,3 +1,6 @@
+// Folder drag motion adapted from Yab's ColumnDrag.swift and ColumnMotion.swift
+// (Copyright 2026 Serafim Korablev). Apache-2.0, see third_party/yab/LICENSE.
+// Uses AppKit row layers and drag-local previews of the core outline.
 import AppKit
 import AraratKit
 import SwiftUI
@@ -164,7 +167,7 @@ public final class SidebarView: NSView {
     }
 
     public var onMove: ((String, String, Int, Bool, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
-    public var onOpenFolder: ((String, @escaping (WorkspaceSnapshot?) -> Void) -> Void)?
+    var onFolderDragRows: ((String, @escaping ([Row]) -> Void) -> Void)?
     // U25d: the segment menu's commands, the page-half drop and its indicator. `onMakeSplit`
     // answers whether the split was made, so a refused drop sends the copy back.
     public var onPaneCommand: ((PaneCommand, String) -> Void)?
@@ -192,6 +195,7 @@ public final class SidebarView: NSView {
     private var dragLastTick: TimeInterval = 0
     private var dragFavoriteIndex: Int?
     private var dragGeneration = 0
+    private var dragFolderLayout = false
     private var snapshot: WorkspaceSnapshot
     private var spaceIndex = 0
     private var spaceListOrigins: [String: CGFloat] = [:]
@@ -739,6 +743,12 @@ public final class SidebarView: NSView {
     public var organizeCheckIdle: Bool { drag == nil && !dragSettling }
     public var organizeCheckDropLine: Bool { dropIndicator.superlayer != nil }
     public func organizeCheckHint(id: String) -> Bool { rowViews[id]?.hintTimer != nil }
+    public func organizeCheckFolderOpen(id: String) -> Bool { rowViews[id]?.row.collapsed == false }
+
+    public func organizeCheckAim(at point: CGPoint) {
+        organizeCheckPoint = point
+        moveDrag(to: point)
+    }
 
     public func organizeCheckEnd(cancel: Bool = false) -> Bool {
         guard let source = organizeCheckSource, let window else { return false }
@@ -864,7 +874,12 @@ public final class SidebarView: NSView {
             .filter { $0.1.intersects(listScroll.contentView.bounds) && $0.0 != drag?.row.id }
             .sorted { $0.1.minY < $1.1.minY }
             .map { ($0.0, $0.1.minY - listScroll.contentView.bounds.minY) }
-        let shownID = snapshotSpace?.id
+        let oldSpace = self.snapshot.spaces.indices.contains(spaceIndex) ? self.snapshot.spaces[spaceIndex] : nil
+        let shownID = oldSpace?.id
+        if drag != nil, let oldSpace, snapshot.spaces.first(where: { $0.id == oldSpace.id })?.pinned != oldSpace.pinned {
+            drag?.sprungFolders.removeAll()
+            drag?.folderHover.aim(at: nil, now: dragClock())
+        }
         clearScrollPresentation()
         spaceScroll = SpaceScrollState()
         self.snapshot = snapshot
@@ -929,7 +944,12 @@ public final class SidebarView: NSView {
     }
 
     private var snapshotSpace: SpaceSnapshot? {
-        snapshot.spaces.indices.contains(spaceIndex) ? snapshot.spaces[spaceIndex] : nil
+        guard snapshot.spaces.indices.contains(spaceIndex) else { return nil }
+        var space = snapshot.spaces[spaceIndex]
+        if let drag, !drag.sprungFolders.isEmpty {
+            space.pinned = sidebarPreviewPinned(space.pinned, sprungFolders: drag.sprungFolders)
+        }
+        return space
     }
 
     public func selectRow(id: String) -> Bool {
@@ -2794,6 +2814,7 @@ extension SidebarView {
         let source = rowViews[item.id] ?? view
         let point = dragPoint(windowPoint)
         drag = SidebarDragState(row: item, origin: point, originFrame: dragRect(source), position: point)
+        dropTarget = .refused
         dragShownPane = shown
         // The zone set is fixed for the drag: only the shown split's own axis offers halves.
         dragShownVertical = shown.flatMap { splitIsVertical?($0) } ?? false
@@ -2870,22 +2891,42 @@ extension SidebarView {
     }
 
     private func resolveDrag() {
-        guard let state = drag, state.active, let geometry = dragGeometry() else { return }
+        guard !dragFolderLayout, let state = drag, state.active, let geometry = dragGeometry() else { return }
         // The page's halves are judged before the sidebar's targets: the pointer is outside the
         // sidebar there, which the sidebar's own resolver calls a refusal. A drop needs a real,
         // different target on the page: a row cannot split with itself, and a split row joins
         // nothing (the core refuses both, so the half is not offered).
-        if !privateWindow, state.row.kind == .tab, let target = dragShownPane, target != state.row.id,
-           let half = pageHalf(at: state.position) {
-            dropTarget = .split(half.side)
-            showPaneDrop?(half)
+        let pane = !privateWindow && state.row.kind == .tab && dragShownPane != nil && dragShownPane != state.row.id
+            ? pageHalf(at: state.position) : nil
+        let next = pane.map { SidebarDrop.split($0.side) } ?? sidebarLanding(at: state.position, geometry: geometry, dragged: state.row)
+        if let folded = state.sprungFolders.reversed().first(where: { entry in
+            guard let head = geometry.rows.first(where: { $0.row.id == entry.id })?.frame else { return true }
+            let last = geometry.rows.filter {
+                ($0.row.kind == .tab || $0.row.kind == .split) && $0.row.id != state.row.id
+                    && geometry.isWithin($0.row.id, folder: entry.id)
+            }.map(\.frame.midY).max() ?? head.midY
+            let inside = next.move.map { geometry.isWithin($0.container, folder: entry.id) } ?? false
+            return sidebarShouldRefold(want: (state.position.y - head.midY) / head.height,
+                                       last: (last - head.midY) / head.height, landsInside: inside)
+        }) {
+            changeDragFolders(at: folded.id, opening: false) {
+                drag?.sprungFolders.removeAll { geometry.isWithin($0.id, folder: folded.id) }
+            }
+            resolveDrag()
+            return
+        }
+        if let feedback = next.haptic(from: dropTarget, today: geometry.space.todayId) {
+            NSHapticFeedbackManager.defaultPerformer.perform(feedback, performanceTime: .now)
+        }
+        dropTarget = next
+        drag?.folderHover.aim(at: sidebarSpringCandidate(drop: next, rows: geometry.rows), now: dragClock())
+        showPaneDrop?(pane)
+        if pane != nil {
             setRefusedDock(nil)
             for row in rowViews.values { row.dropHovered = false }
             dropIndicator.removeFromSuperlayer()
             return
         }
-        showPaneDrop?(nil)
-        dropTarget = resolveSidebarDrop(position: state.position, geometry: geometry, dragged: state.row)
         let refused = geometry.dock.firstIndex { $0.frame.contains(state.position) && $0.space.profileKey != geometry.space.profileKey }
         setRefusedDock(refused)
         let favoriteIndex: Int?
@@ -2896,12 +2937,6 @@ extension SidebarView {
             layoutSubtreeIfNeeded()
         }
         for row in rowViews.values { row.dropHovered = dropTarget == .folder(row.row.id) }
-        let folder: String?
-        if case .folder(let id) = dropTarget { folder = id } else { folder = nil }
-        if drag?.hoverFolder != folder {
-            drag?.hoverFolder = folder
-            drag?.hoverStarted = folder == nil ? nil : dragClock()
-        }
         dropIndicator.removeFromSuperlayer()
         dropIndicator.frame = bounds
         if case .insert(_, _, let y, let depth) = dropTarget {
@@ -2923,6 +2958,85 @@ extension SidebarView {
         }
     }
 
+    private func sidebarLanding(at point: CGPoint, geometry: SidebarDragGeometry, dragged: Row) -> SidebarDrop {
+        if geometry.list.contains(point), let state = drag {
+            for entry in state.sprungFolders.reversed() {
+                guard let head = geometry.rows.first(where: { $0.row.id == entry.id })?.frame,
+                      sidebarAimsIntoSprung(want: (point.y - head.midY) / head.height,
+                                             alreadyAimingInside: dropTarget.folder == entry.id) else { continue }
+                return .folder(entry.id)
+            }
+        }
+        return resolveSidebarDrop(position: point, geometry: geometry, dragged: dragged)
+    }
+
+    private func changeDragFolders(at id: String, opening: Bool, change: () -> Void) {
+        dragFolderLayout = true
+        defer { dragFolderLayout = false }
+        let animate = !dragReduceMotion()
+        let before = animate ? Dictionary(uniqueKeysWithValues: rows.arrangedSubviews.map {
+            (ObjectIdentifier($0), presentedFrame($0).minY)
+        }) : [:]
+        let head = rowViews[id].flatMap { before[ObjectIdentifier($0)] }
+        change()
+        let duration = opening ? 0.22 : 0.14
+        let timing = opening
+            ? CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+            : CAMediaTimingFunction(controlPoints: 0, 0, 0.58, 1)
+        if animate, !opening, let headView = rowViews[id], let document = listScroll.documentView {
+            let pinned = Set(snapshotSpace?.pinned.map(\.id) ?? [])
+            let clip = listScroll.contentView
+            let headY = document.convert(headView.bounds, from: headView).midY
+            for (id, view) in rowViews where view.pinned && !pinned.contains(id) {
+                let frame = document.convert(presentedFrame(view), from: self)
+                guard document.convert(clip.bounds, from: clip).intersects(frame) else { continue }
+                rowViews.removeValue(forKey: id)
+                view.layer?.removeAnimation(forKey: "row.close.move")
+                rows.removeArrangedSubview(view)
+                view.removeFromSuperview()
+                view.translatesAutoresizingMaskIntoConstraints = true
+                document.addSubview(view)
+                view.frame = frame
+                view.acceptsKeyboardFocus = false
+                view.setAccessibilityHidden(true)
+                let slide = CABasicAnimation(keyPath: "transform.translation.y")
+                slide.fromValue = 0
+                slide.toValue = headY - frame.midY
+                slide.duration = duration
+                let fade = CABasicAnimation(keyPath: "opacity")
+                fade.fromValue = 1
+                fade.toValue = 0
+                fade.duration = duration
+                let fold = CAAnimationGroup()
+                fold.animations = [slide, fade]
+                fold.duration = duration
+                fold.timingFunction = timing
+                CATransaction.begin()
+                CATransaction.setCompletionBlock {
+                    Task { @MainActor in view.removeFromSuperview() }
+                }
+                view.layer?.opacity = 0
+                view.layer?.add(fold, forKey: "drag.folder.shut")
+                CATransaction.commit()
+            }
+        }
+        reload()
+        layoutSubtreeIfNeeded()
+        guard animate else { return }
+        for view in rows.arrangedSubviews {
+            view.layer?.removeAnimation(forKey: "row.close.move")
+            guard let oldY = before[ObjectIdentifier(view)] ?? head else { continue }
+            let offset = oldY - convert(view.frame, from: view.superview).minY
+            guard abs(offset) > 0.01 else { continue }
+            let animation = CABasicAnimation(keyPath: "transform.translation.y")
+            animation.fromValue = offset
+            animation.toValue = 0
+            animation.duration = duration
+            animation.timingFunction = timing
+            view.layer?.add(animation, forKey: "row.close.move")
+        }
+    }
+
     private func setRefusedDock(_ index: Int?) {
         guard index != refusedDockIndex else { return }
         refusedDockIndex = index
@@ -2941,15 +3055,19 @@ extension SidebarView {
             if delta != 0 { listScroll.move(to: listScroll.contentView.bounds.minY + delta * SidebarDragMetrics.autoscrollSpeed * elapsed) }
         }
         resolveDrag()
-        if let id = drag?.hoverFolder, let start = drag?.hoverStarted,
-           now - start >= SidebarDragMetrics.folderHoverDelay,
-           rowViews[id]?.row.collapsed == true {
-            drag?.hoverStarted = nil
-            onOpenFolder?(id) { [weak self] snapshot in
-                guard let self, let snapshot else { return }
-                self.replaceSnapshot(snapshot)
-                self.resolveDrag()
+        guard let id = drag?.folderHover.ready(now: dragClock()), let attempt = drag?.folderHover.attempt else { return }
+        let generation = dragGeneration
+        let pinned = snapshot.spaces[spaceIndex].pinned
+        onFolderDragRows?(id) { [weak self] rows in
+            guard let self, !rows.isEmpty, self.dragGeneration == generation, !self.dragSettling,
+                  self.drag?.folderHover.attempt == attempt, self.drag?.folderHover.folder == id,
+                  self.snapshot.spaces.indices.contains(self.spaceIndex),
+                  self.snapshot.spaces[self.spaceIndex].pinned == pinned else { return }
+            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+            self.changeDragFolders(at: id, opening: true) {
+                self.drag?.sprungFolders.append((id: id, rows: rows))
             }
+            self.resolveDrag()
         }
     }
 
@@ -2980,9 +3098,13 @@ extension SidebarView {
         } else if let move = target.move, let onMove {
             let pinSpace = pinFromTodaySpace(id: state.row.id, container: move.container)
             let generation = dragGeneration
-            onMove(state.row.id, move.container, move.index, { if case .folder = target { true } else { false } }()) { [weak self] snapshot in
+            let openFolder = target.folder != nil || (dragGeometry().map { geometry in
+                drag?.sprungFolders.contains { geometry.isWithin(move.container, folder: $0.id) } == true
+            } ?? false)
+            onMove(state.row.id, move.container, move.index, openFolder) { [weak self] snapshot in
                 guard let self, self.dragGeneration == generation else { return }
                 if let snapshot {
+                    self.drag?.sprungFolders.removeAll()
                     self.replaceSnapshot(snapshot)
                     self.showPinHint(id: state.row.id, space: pinSpace)
                 }
@@ -3007,6 +3129,9 @@ extension SidebarView {
     private func settleDrag(accepted: Bool) {
         setRefusedDock(nil)
         guard let state = drag else { return }
+        if let first = state.sprungFolders.first {
+            changeDragFolders(at: first.id, opening: false) { drag?.sprungFolders.removeAll() }
+        }
         dragFavoriteIndex = nil
         reloadFavorites()
         layoutSubtreeIfNeeded()
@@ -3705,7 +3830,7 @@ extension SidebarView {
         guard let space = snapshotSpace,
               let dragged = (space.today + space.pinned + space.favorites).first(where: { $0.id == draggedID }),
               let geometry = dragGeometry() else { return nil }
-        switch resolveSidebarDrop(position: position, geometry: geometry, dragged: dragged) {
+        switch sidebarLanding(at: position, geometry: geometry, dragged: dragged) {
         case .refused: return SidebarDropCheck(kind: "refused", container: nil, index: nil)
         case let .insert(container, index, _, _): return SidebarDropCheck(kind: "insert", container: container, index: index)
         case let .folder(id): return SidebarDropCheck(kind: "folder", container: id, index: nil)

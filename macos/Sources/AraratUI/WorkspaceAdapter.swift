@@ -165,6 +165,10 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         enqueue({ try self.opened().snapshot(windowId: self.windowID) }, completion: completion)
     }
 
+    func folderDragRows(id: String, completion: @escaping Completion<[Row]>) {
+        enqueue({ try self.opened().folderDragRows(windowId: self.windowID, folderId: id) }, completion: completion)
+    }
+
     public func move(id: String, container: String, index: Int, openFolder: Bool, completion: @escaping Completion<WorkspaceSnapshot>) {
         enqueueEdit({
             let store = try self.opened()

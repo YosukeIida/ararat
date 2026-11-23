@@ -1,0 +1,16 @@
+Yab
+Copyright 2026 Serafim Korablev
+
+This product is licensed under the Apache License, Version 2.0 (LICENSE).
+
+Yab began as a fork of Search by Office Commun, MIT License,
+Copyright (c) 2026 Office Commun.
+
+It includes third-party software and assets under their own licenses; their
+notices are in THIRD_PARTY_NOTICES.md. The Central Icon System icons it
+contains are licensed separately by their authors and are not covered by the
+Apache License (see THIRD_PARTY_NOTICES.md).
+
+"Yab", "Yet Another Browser", the Yab logo and app icons are trademarks of
+Serafim Korablev and are not licensed under the Apache License; see
+TRADEMARKS.md.

@@ -112,6 +112,8 @@ cp -- "$package_dir/../third_party/ardia/LICENSE" "$app/Contents/Resources/Ardia
 cp -- "$package_dir/../third_party/ardia/LICENSE.Apache-2.0" "$app/Contents/Resources/Ardia-LICENSE.Apache-2.0.txt"
 cp -- "$package_dir/../third_party/ardia/NOTICE" "$app/Contents/Resources/Ardia-NOTICE.txt"
 cp -- "$package_dir/../third_party/cra/LICENSE" "$app/Contents/Resources/Cra-LICENSE.txt"
+cp -- "$package_dir/../third_party/yab/LICENSE" "$app/Contents/Resources/Yab-LICENSE.txt"
+cp -- "$package_dir/../third_party/yab/NOTICE" "$app/Contents/Resources/Yab-NOTICE.txt"
 cp -- "$package_dir/.build/artifacts/sparkle/Sparkle/LICENSE" "$app/Contents/Resources/Sparkle-LICENSE.txt"
 
 plist="$app/Contents/Info.plist"
