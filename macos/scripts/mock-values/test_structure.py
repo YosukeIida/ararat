@@ -93,6 +93,29 @@ class StructureTests(unittest.TestCase):
         self.assertTrue(check(rule, {"windows": [{"root": view("NSView", children=[header, row])}]}))
         self.assertFalse(check(rule, {"windows": [{"root": header}, {"root": row}]}))
 
+    def test_library_tile_centres_the_icon_and_label(self):
+        rule = {"kind": "library-tile", "tiles": 1, "gap": 8}
+        tile_frame = {"x": 12, "y": 46, "width": 88, "height": 80}
+        icon = {"x": 45, "y": 87.5, "width": 22, "height": 22}
+        label = {"x": 32, "y": 62.5, "width": 48, "height": 17}
+
+        def tree(icon_frame, label_frame):
+            stack = view("NSStackView", frame={"x": 32, "y": 62.5, "width": 48, "height": 47},
+                         children=[view("LibraryRailTileIconView", frame=icon_frame), view("NSTextField", frame=label_frame)])
+            tile = view("LibraryRailTileButton", frame=tile_frame, children=[stack])
+            return {"windows": [{"root": view("NSView", children=[tile])}]}
+
+        for icon_frame, label_frame, expected in [
+                (icon, label, True),
+                ({**icon, "y": icon["y"] + 2}, label, False),
+                (icon, {**label, "y": label["y"] + 2}, False),
+                ({**icon, "y": icon["y"] + 2}, {**label, "y": label["y"] + 2}, False),
+                (icon, {**label, "x": label["x"] - 2}, False)]:
+            with self.subTest(icon=icon_frame, label=label_frame):
+                self.assertEqual(check(rule, tree(icon_frame, label_frame)), expected)
+        bare = view("LibraryRailTileButton", frame=tile_frame)
+        self.assertFalse(check(rule, {"windows": [{"root": view("NSView", children=[bare])}]}))
+
     def test_split_members_must_share_a_visible_row_and_not_overlap(self):
         first = view("SplitSegmentButton")
         second = view("SplitSegmentButton", x=18)

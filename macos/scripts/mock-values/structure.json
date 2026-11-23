@@ -58,6 +58,7 @@
   {"source": "B-Library.dc.html", "capture": "keyboard-archive-list", "kind": "contains",
    "container": {"class": "LibraryView"},
    "members": [{"label": "Archive page"}, {"label": "Search Archived Tabs"}, {"class": "ArchiveRowView"}]},
+  {"source": "B-Library.dc.html:25", "capture": "keyboard-archive-list", "kind": "library-tile", "tiles": 2, "gap": 8},
   {"source": "B-LibraryStates.dc.html", "capture": "keyboard-archive-no-matches", "kind": "count", "class": "ArchiveRowView", "count": 0},
   {"source": "B-LibraryStates.dc.html", "capture": "keyboard-archive-empty", "kind": "count", "class": "ArchiveRowView", "count": 0},
   {"source": "B-FloatingDark.dc.html", "capture": "fullscreen-dark-floating", "kind": "floating-sidebar", "inset": 5}
