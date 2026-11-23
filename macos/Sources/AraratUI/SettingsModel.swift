@@ -258,7 +258,7 @@ public final class SettingsModel: ObservableObject {
 
     var subtitle: String {
         if page == .about {
-            if let version = Bundle.main.object(forInfoDictionaryKey: "AraratVersion") as? String {
+            if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
                 return "Version \(version) · built on Chromium"
             }
             return "Development build · built on Chromium"

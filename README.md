@@ -4,6 +4,15 @@ A macOS browser that brings Arc's workflow and Yab's vertical tabs to Chromium. 
 
 Licensed under GPL-3.0 (`LICENSE`).
 
+## Installing an ad-hoc build
+
+Gatekeeper blocks the ad-hoc build because Apple has not notarized it. Move
+`Ararat.app` to `/Applications`, then remove its quarantine attribute in Terminal.
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Ararat.app
+```
+
 ## Development
 
 The design is in `docs/architecture.md`. The dev shell (`nix/flake.nix`, loaded by direnv) provides the Rust toolchain, and Node.js, Ghidra and a JDK for REA (`~/workspace/github.com/morluto/rea`, after `npm ci && npm run build` there). It also points `DEVELOPER_DIR` at nix's apple-sdk, which hides Xcode's `swift` and `swiftc`, so Swift and REA run through the `xc` function below.
