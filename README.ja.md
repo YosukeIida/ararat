@@ -4,6 +4,15 @@ Arc の操作感と Yab の縦タブを Chromium の上に作る macOS ブラウ
 
 ライセンスは GPL-3.0（`LICENSE`）。
 
+## ad-hoc 署名ビルドのインストール
+
+ad-hoc 署名ビルドは Apple の公証を受けていないため、Gatekeeper が起動をブロックする。
+`Ararat.app` を `/Applications` に移動し、ターミナルで隔離属性を削除する。
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Ararat.app
+```
+
 ## 開発
 
 設計は `docs/architecture.md` にある。開発用のシェル（`nix/flake.nix`、direnv が読み込む）が Rust のツールチェーンと、REA 用の Node.js・Ghidra・JDK を提供する（REA は `~/workspace/github.com/morluto/rea` で `npm ci && npm run build` を実行してから使う）。このシェルは `DEVELOPER_DIR` を nix の apple-sdk に向け、Xcode の `swift` と `swiftc` が見えなくなるため、Swift と REA は下の `xc` 関数を通して実行する。

@@ -15,10 +15,7 @@ func fail(_ message: String) -> Never {
   exit(1)
 }
 
-// The versioned framework path the way chrome_exe_main_mac.cc builds it, the
-// version taken from the outer bundle's Info.plist, so the launcher loads the
-// framework it shipped with even when a second Versions/<new> is staged next
-// to the running one.
+// Why not Versions/Current: the link can move while an update is staged.
 var size: UInt32 = 0
 guard _NSGetExecutablePath(nil, &size) == -1 else { fail("cannot get the executable path") }
 var buffer = [CChar](repeating: 0, count: Int(size))
@@ -28,8 +25,8 @@ let executableDir = (String(decoding: buffer[..<end].map { UInt8.init($0) }, as:
   .deletingLastPathComponent
 
 guard let info = Bundle.main.infoDictionary,
-      let version = info["CFBundleShortVersionString"] as? String, !version.isEmpty else {
-  fail("no CFBundleShortVersionString in the bundle's Info.plist")
+      let version = info["AraratChromiumVersion"] as? String, !version.isEmpty else {
+  fail("no AraratChromiumVersion in the bundle's Info.plist")
 }
 
 let frameworkPath = ((executableDir + "/../Frameworks/Chromium Framework.framework/Versions/\(version)/Chromium Framework") as NSString)

@@ -87,12 +87,8 @@ fi
 if [[ -n "${ARARAT_FEED_URL:-}" || -n "${ARARAT_ED_PUBLIC_KEY:-}" ]]; then
   [[ -n "${ARARAT_FEED_URL:-}" && -n "${ARARAT_ED_PUBLIC_KEY:-}" && -n "$version" ]] ||
     die "updates require ARARAT_FEED_URL, ARARAT_ED_PUBLIC_KEY and ARARAT_BUILD_VERSION"
-  case "$ARARAT_FEED_URL" in
-    https://?*|http://localhost/*|http://localhost:*) ;;
-    *) die "expected an HTTPS feed URL or a localhost HTTP test feed" ;;
-  esac
-  [[ "$ARARAT_ED_PUBLIC_KEY" =~ ^[A-Za-z0-9+/]{43}=$ ]] ||
-    die "expected a Base64-encoded EdDSA public key"
+  . "$script_dir/configure-updates.sh"
+  validate_update_configuration
 fi
 
 if [[ "$release" == 1 ]]; then
@@ -120,15 +116,20 @@ plist="$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Ararat" "$plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier net.iodine2.ararat" "$plist"
 
+# Why keep the original value: the launcher must load the exact Chromium build it ships.
+framework_version="$(plutil -extract CFBundleShortVersionString raw -expect string -o - "$plist")"
+[[ -f "$app/Contents/Frameworks/Chromium Framework.framework/Versions/$framework_version/Chromium Framework" ]] ||
+  die "missing Chromium framework for version $framework_version"
+plutil -insert AraratChromiumVersion -string "$framework_version" "$plist"
+plutil -replace CFBundleShortVersionString -string 0.0.1 "$plist"
+
 for key in SUFeedURL SUPublicEDKey AraratUpdateChannel SURequireSignedFeed SUVerifyUpdateBeforeExtraction SUSignedFeedFailureExpirationInterval; do
   if plutil -extract "$key" xml1 -o /dev/null "$plist" 2>/dev/null; then
     plutil -remove "$key" "$plist"
   fi
 done
 if [[ -n "$version" ]]; then
-  # Chromium locates its versioned framework via CFBundleShortVersionString.
   plutil -replace CFBundleVersion -string "$version" "$plist"
-  plutil -insert AraratVersion -string "$version" "$plist"
 fi
 if [[ -n "${ARARAT_CORRESPONDING_SOURCE_URL:-}" ]]; then
   [[ "$ARARAT_CORRESPONDING_SOURCE_URL" == https://?* ]] || die "set an HTTPS source archive URL"
@@ -137,12 +138,7 @@ elif [[ "$release" == 1 ]]; then
   plutil -insert AraratLocalCorrespondingSource -bool true "$plist"
 fi
 if [[ -n "${ARARAT_FEED_URL:-}" ]]; then
-  plutil -insert SUFeedURL -string "$ARARAT_FEED_URL" "$plist"
-  plutil -insert SUPublicEDKey -string "$ARARAT_ED_PUBLIC_KEY" "$plist"
-  plutil -insert AraratUpdateChannel -string "$channel" "$plist"
-  plutil -replace SUVerifyUpdateBeforeExtraction -bool true "$plist"
-  plutil -replace SURequireSignedFeed -bool true "$plist"
-  plutil -replace SUSignedFeedFailureExpirationInterval -integer 0 "$plist"
+  configure_updates "$plist" "$channel"
 fi
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/bundle-app.XXXXXX")"
@@ -164,7 +160,7 @@ com.apple.developer.associated-domains*)
         drop=1 ;;
       *)
         value="$(/usr/libexec/PlistBuddy -c "Print :$key" "$dst")" || return 1
-        if [[ "$value" == *TeamIdentifierPrefix* || "$value" == *'${CHROMIUM_TEAM_ID}'* ]]; then
+        if [[ "$value" == *TeamIdentifierPrefix* || "$value" == *"\${CHROMIUM_TEAM_ID}"* ]]; then
           drop=1
         fi
         ;;
