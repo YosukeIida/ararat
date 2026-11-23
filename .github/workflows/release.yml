@@ -64,6 +64,11 @@ jobs:
           engine="$RUNNER_TEMP/engine"
           stage="$RUNNER_TEMP/stage"
           macos/scripts/bundle-app.sh --from-artifact "$engine" "$stage"
+          version=$(plutil -extract CFBundleShortVersionString raw -expect string -o - "$stage/Ararat.app/Contents/Info.plist")
+          if [[ "$version" != "${GITHUB_REF_NAME#v}" ]]; then
+            echo 'The release tag must match the app marketing version' >&2
+            exit 1
+          fi
           ditto -c -k --keepParent "$stage/Ararat.app" "$RUNNER_TEMP/assembled.zip"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -120,6 +125,7 @@ jobs:
 
           if [[ -n "$DEVELOPER_ID_P12" ]]; then
             password=$(openssl rand -hex 32)
+            echo "::add-mask::$password"
             printf '%s' "${DEVELOPER_ID_P12:?}" | base64 --decode > "$creds/developer-id.p12"
             printf '%s\n' "${NOTARY_API_KEY:?}" > "$creds/notary.p8"
             printf '%s\n' "${ARARAT_RELEASE_ENTITLEMENTS:?}" > "$creds/entitlements.plist"
@@ -162,8 +168,8 @@ jobs:
               --issuer "$notary_issuer" "$app"
             rm "$creds/notary.p8"
           else
-            if [[ -n "$DEVELOPER_ID_P12_PASSWORD" ]]; then
-              echo 'DEVELOPER_ID_P12 is required when its password is configured' >&2
+            if [[ -n "$DEVELOPER_ID_P12_PASSWORD" || -n "$NOTARY_API_KEY" || -n "$NOTARY_API_KEY_ID" || -n "$NOTARY_API_ISSUER" ]]; then
+              echo 'DEVELOPER_ID_P12 is required when DEVELOPER_ID_P12_PASSWORD, NOTARY_API_KEY, NOTARY_API_KEY_ID or NOTARY_API_ISSUER is configured' >&2
               exit 1
             fi
             macos/scripts/sign-release.sh --identity - "$app"
