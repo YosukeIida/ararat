@@ -96,7 +96,7 @@ fn moves_and_deletes_reach_disk_as_in_memory() {
 }
 
 #[test]
-fn writes_commit_within_the_batch_window_without_a_flush() {
+fn writes_commit_in_the_background_without_a_flush() {
     let path = fresh_db("window");
     let (store, _) = Store::open(&path).unwrap();
     store.write(imported().to_ops());
@@ -105,7 +105,7 @@ fn writes_commit_within_the_batch_window_without_a_flush() {
 }
 
 #[test]
-fn steady_writes_still_commit_within_the_batch_window() {
+fn steady_writes_do_not_postpone_the_commit_forever() {
     let path = fresh_db("steady");
     let (store, _) = Store::open(&path).unwrap();
     let ops = imported().to_ops();
