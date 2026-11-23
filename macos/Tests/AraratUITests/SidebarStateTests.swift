@@ -351,7 +351,6 @@ func sidebarKeepsItsLookWhenTheWindowOrAppDeactivates() {
 
     container.windowKey = { false }
     NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
-    NotificationCenter.default.post(name: NSWindow.didResignMainNotification, object: window)
     #expect(!panel.coating.isHidden)
     #expect(panel.checkDrawnColor == color)
     #expect(panel.grain.opacity == 0.5)
@@ -363,4 +362,31 @@ func sidebarKeepsItsLookWhenTheWindowOrAppDeactivates() {
     #expect(panel.checkDrawnColor == color)
     #expect(panel.grain.opacity == 0.5)
     #expect(sidebar.appearance == NSAppearance(named: .darkAqua))
+}
+
+@Test @MainActor
+func sidebarKeepsItsGlassViewWhenTheWindowOrAppDeactivates() throws {
+    guard #available(macOS 26.0, *) else { return }
+    let look = Look(colors: [LookColor(red: 0, green: 0, blue: 1, x: 0.5, y: 0.5)],
+                    opacity: 0, grain: 0.5, glass: true, appearance: .dark)
+    let (window, _, container, panel) = windowedSidebar(selected: true, look: look)
+    defer { window.contentView = nil }
+    panel.reduceTransparency = { false }
+    panel.updateLook(look, look, fraction: 0)
+    let glass = try #require(panel.subviews.compactMap { $0 as? NSGlassEffectView }.first)
+    #expect(!glass.isHidden)
+    #expect(glass.style == .regular)
+    #expect(glass.appearance == NSAppearance(named: .darkAqua))
+
+    container.windowKey = { false }
+    NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+    #expect(glass.superview === panel && !glass.isHidden)
+    #expect(glass.style == .regular)
+    #expect(glass.appearance == NSAppearance(named: .darkAqua))
+
+    container.applicationActive = { false }
+    NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+    #expect(glass.superview === panel && !glass.isHidden)
+    #expect(glass.style == .regular)
+    #expect(glass.appearance == NSAppearance(named: .darkAqua))
 }
