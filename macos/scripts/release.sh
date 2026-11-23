@@ -54,7 +54,7 @@ require_new_tag
 repo="$(gh repo view "$(git remote get-url origin)" --json nameWithOwner --jq .nameWithOwner)"
 
 nix develop ./nix --no-update-lock-file -c "$scripts/build-core.sh"
-(cd macos && env -u DEVELOPER_DIR -u SDKROOT /usr/bin/swift build -c release)
+(cd macos && env -u SDKROOT DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release)
 [[ "$(git rev-parse --verify HEAD)" == "$head" ]] || die "HEAD changed during the build"
 
 out="$(mktemp -d)"
@@ -67,10 +67,12 @@ ARARAT_VERSION="$release_version" \
 ditto -c -k --keepParent "$out/Ararat.app" "$zip"
 
 release_flag=--latest
+channel_name=Stable
 if [[ "$release_channel" == preview ]]; then
   release_flag=--prerelease
+  channel_name=Preview
 fi
-printf -v notes '%s channel. Unzip the download and move `Ararat.app` to Applications. This build is ad-hoc signed. In Terminal, run `xattr -dr com.apple.quarantine /Applications/Ararat.app`.\n' "$release_channel"
+printf -v notes '%s channel. Unzip the download and move `Ararat.app` to Applications. This build is ad-hoc signed. In Terminal, run `xattr -dr com.apple.quarantine /Applications/Ararat.app`.\n' "$channel_name"
 publish=(gh release create "$tag" "$zip" "$source_archive" "$source_archive.sha256"
   --repo "$repo" --target "$head" --title "Ararat $release_display_version" "$release_flag" --notes "$notes")
 if [[ "$dry_run" == 1 ]]; then
