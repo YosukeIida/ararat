@@ -50,6 +50,7 @@ func arcImportRetryLoadsFromDiskAndPublishesIntoTheOpenSidebar() async throws {
     let detector = ArcImportDetector(installed: true)
     let model = try #require(runtime.arcImportModel(directory: directory, detector: detector))
     let controller = OnboardingWindowController(model: model)
+    let probe = try #require(controller.checkProbe())
     func begin(_ controller: OnboardingWindowController) {
         for id in ["onboarding-next", "onboarding-next", "onboarding-next", "onboarding-not-now"] {
             #expect(controller.checkClick(id))
@@ -64,18 +65,20 @@ func arcImportRetryLoadsFromDiskAndPublishesIntoTheOpenSidebar() async throws {
 
     begin(controller)
     try await waitFor { model.stage != .progress }
-    #expect(model.stage == .error("StorableSidebar.json was not found."))
+    #expect(model.stage == .error("StorableSidebar.json was not found.", mayHaveImported: false))
+    #expect(probe.subtitle == "Nothing was imported. Nothing in Arc was changed.")
     #expect(runtime.snapshot.spaces == initial.spaces)
 
     let file = directory.appendingPathComponent("StorableSidebar.json")
     try "{".write(to: file, atomically: true, encoding: .utf8)
     #expect(controller.checkClick("onboarding-retry"))
     try await waitFor { model.stage != .progress }
-    guard case .error(let reason) = model.stage else {
+    guard case .error(let reason, _) = model.stage else {
         Issue.record("Invalid JSON did not stop import")
         return
     }
     #expect(reason.hasPrefix("StorableSidebar.json: "))
+    #expect(probe.subtitle == "Nothing was imported. Nothing in Arc was changed.")
     #expect(runtime.snapshot.spaces == initial.spaces)
 
     try OnboardingFixtures.showcaseSidebar.write(to: file, atomically: true, encoding: .utf8)
@@ -97,4 +100,13 @@ func arcImportRetryLoadsFromDiskAndPublishesIntoTheOpenSidebar() async throws {
     }
     #expect(storedIDs.count == initial.spaces.count + 3)
     #expect(Set(storedIDs) == Set(initial.spaces.map(\.id) + ["space-work", "space-personal", "space-reading"]))
+
+    runtime.workspace = WorkspaceAdapter(windowID: runtime.windowID)
+    let storeError = try #require(runtime.arcImportModel(directory: directory, detector: detector))
+    let storeErrorController = OnboardingWindowController(model: storeError)
+    let storeErrorProbe = try #require(storeErrorController.checkProbe())
+    begin(storeErrorController)
+    try await waitFor { storeError.stage != .progress }
+    #expect(storeError.stage == .error("workspace is not open", mayHaveImported: true))
+    #expect(storeErrorProbe.subtitle == "Nothing in Arc was changed.")
 }

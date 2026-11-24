@@ -269,9 +269,9 @@ final class OnboardingContentView: NSView {
             body("The spaces came in. This file did not, so the rest of the import went on without it.", width: width, y: &y)
             y += 16
             addSubview(detail(message, id: "onboarding-warning", color: OnboardingColor.warning, y: y, width: contentWidth))
-        case .error(let message):
+        case .error(let message, let mayHaveImported):
             title("The import stopped", width: width, y: &y, centered: true)
-            body(model.usesArcDirectory ? "Nothing in Arc was changed." : "Nothing was imported. Nothing in Arc was changed.",
+            body(mayHaveImported ? "Nothing in Arc was changed." : "Nothing was imported. Nothing in Arc was changed.",
                  width: width, y: &y, centered: true)
             y += 16
             addSubview(detail(message, id: "onboarding-error", color: OnboardingColor.danger, y: y, width: contentWidth))

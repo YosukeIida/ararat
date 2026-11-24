@@ -165,8 +165,7 @@ public final class OnboardingModel: NSObject, ObservableObject {
         /// report's error field verbatim.
         case siblingFile(String)
         case done
-        /// Screen 7: the import itself stopped. The message is `ImportError`'s own text.
-        case error(String)
+        case error(String, mayHaveImported: Bool)
     }
 
     @Published public private(set) var stage: Stage = .welcome {
@@ -220,7 +219,7 @@ public final class OnboardingModel: NSObject, ObservableObject {
                 workspaceChanged()
                 switch result {
                 case .success(let value): self?.finishImport(value.report, warning: value.warning)
-                case .failure(let error): self?.stage = .error(Self.errorText(error))
+                case .failure(let error): self?.stage = Self.errorStage(error)
                 }
             }
         }
@@ -340,7 +339,7 @@ public final class OnboardingModel: NSObject, ObservableObject {
                                                     linkRoutingJson: data.routing, ownerProfile: nil)
             finishImport(result.report)
         } catch {
-            stage = .error(Self.errorText(error))
+            stage = Self.errorStage(error)
         }
     }
 
@@ -364,7 +363,7 @@ public final class OnboardingModel: NSObject, ObservableObject {
 
     /// Screen 7's "Copy Details": the ImportError's message, the only detail there is (D10).
     public func copyDetails() {
-        guard case .error(let message) = stage else { return }
+        guard case .error(let message, _) = stage else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(message, forType: .string)
     }
@@ -436,12 +435,14 @@ public final class OnboardingModel: NSObject, ObservableObject {
         return lines
     }
 
-    static func errorText(_ error: Error) -> String {
-        if let core = error as? CoreError {
-            switch core {
-            case .Edit(let message), .Import(let message), .Store(let message), .Live(let message): return message
-            }
+    private static func errorStage(_ error: Error) -> Stage {
+        switch error as? CoreError {
+        case .Store(let message):
+            return .error(message, mayHaveImported: true)
+        case .Edit(let message), .Import(let message), .Live(let message):
+            return .error(message, mayHaveImported: false)
+        case nil:
+            return .error(error.localizedDescription, mayHaveImported: false)
         }
-        return error.localizedDescription
     }
 }

@@ -273,7 +273,7 @@ extension Runtime {
             browserCheckPhase = 8
         case 8:
             guard let probe = probe(), let model = owner.onboardingWindow?.model else { wait("error model"); return }
-            guard case .error(let message) = probe.stage else { wait("error stage"); return }
+            guard case .error(let message, _) = probe.stage else { wait("error stage"); return }
             check.errorMessage = message
             mark("error_screen", probe.title == "The import stopped")
             mark("error_message", message.contains("sidebar.containers has no container with spaces"))
