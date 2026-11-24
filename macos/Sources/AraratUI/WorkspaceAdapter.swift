@@ -69,6 +69,24 @@ public final class WorkspaceAdapter: @unchecked Sendable {
         }, completion: completion)
     }
 
+    func importArc(directory: URL, completion: @escaping Completion<(report: ImportReport, warning: String?)>) {
+        enqueue({
+            guard !self.isPrivate else { throw CoreError.Import(message: "Import requires a regular window.") }
+            let store = try self.opened()
+            let files = try ArcImportFiles(directory: directory)
+            do {
+                let result = try store.importArcSidebar(windowId: self.windowID, json: files.sidebar,
+                                                        windowsJson: files.windows, keyBindingsJson: files.keyBindings,
+                                                        linkRoutingJson: files.routing, ownerProfile: nil)
+                return (result.report, files.warning)
+            } catch CoreError.Import(let message) {
+                throw CoreError.Import(message: "StorableSidebar.json: \(message)")
+            } catch CoreError.Store(let message) {
+                throw CoreError.Store(message: "Ararat could not save the imported changes yet and will retry saving them. \(message)")
+            }
+        }, completion: completion)
+    }
+
     // The edits write one op batch each and flush before the
     // fresh routing is returned, so a pane model always sees what a reopen would read.
     public func routing(completion: @escaping Completion<Routing>) {

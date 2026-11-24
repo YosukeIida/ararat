@@ -1,11 +1,7 @@
 import Foundation
 import AraratKit
 
-/// O7: "Import from Arc…" is a command only, with no first-launch gate. Until the importer reads
-/// real files the shipping build has no data source, so the app inserts the File menu item and
-/// this command bar row only while a check runs. The row is not a core key-binding command: the
-/// core's table would list it in the Shortcuts pane forever, and the entry must disappear in a
-/// shipping build (hide, not disable).
+// Why not use a core key-binding command: it would appear in Shortcuts even without Arc installed.
 @MainActor
 public final class OnboardingCommandStore: CommandBarStore {
     public static let commandID = "import_from_arc"

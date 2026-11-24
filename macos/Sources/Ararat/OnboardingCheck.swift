@@ -54,16 +54,7 @@ final class OnboardingCheckState {
 }
 
 extension Runtime {
-    /// The entry is a check-only command until the importer reads real files (O7): the menu item
-    /// and the command bar row exist only while a check runs, and the flow has no data source
-    /// without the fixture. A shipping build therefore cannot reach the window (hide, not disable).
-    static var onboardingEntryVisible: Bool {
-        CommandLine.arguments.contains { $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") }
-    }
-
-    /// The command `import_from_arc`: the File menu item and the command bar row both run it.
-    func openOnboarding() {
-        guard Runtime.onboardingEntryVisible else { return }
+    func openOnboardingCheck() {
         guard let path = (root ?? self).quitPath else { return }
         let owner = root ?? self
         if let existing = owner.onboardingWindow {
