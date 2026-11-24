@@ -220,7 +220,7 @@ final class OnboardingContentView: NSView {
             let card = card(rows: rows, x: OnboardingMetrics.margin, y: y, width: contentWidth)
             addSubview(card)
         case .whatToImport:
-            title("Choose what comes along", width: width, y: &y)
+            title(model.usesArcDirectory ? "What comes along" : "Choose what comes along", width: width, y: &y)
             body("Spaces keep their order, folders and looks. Keyboard shortcuts are counted in the report, not imported.", width: width, y: &y)
             y += 16
             let column = (contentWidth - OnboardingMetrics.columnGap) / 2
@@ -269,9 +269,10 @@ final class OnboardingContentView: NSView {
             body("The spaces came in. This file did not, so the rest of the import went on without it.", width: width, y: &y)
             y += 16
             addSubview(detail(message, id: "onboarding-warning", color: OnboardingColor.warning, y: y, width: contentWidth))
-        case .error(let message):
+        case .error(let message, let mayHaveImported):
             title("The import stopped", width: width, y: &y, centered: true)
-            body("Nothing was imported. Nothing in Arc was changed.", width: width, y: &y, centered: true)
+            body(mayHaveImported ? "Nothing in Arc was changed." : "Nothing was imported. Nothing in Arc was changed.",
+                 width: width, y: &y, centered: true)
             y += 16
             addSubview(detail(message, id: "onboarding-error", color: OnboardingColor.danger, y: y, width: contentWidth))
         }
@@ -382,9 +383,10 @@ final class OnboardingContentView: NSView {
     private func sourceRows() -> [OnboardingRowView] {
         var rows: [OnboardingRowView] = []
         if model.arcInstalled {
+            let subtitle = model.usesArcDirectory ? "Found on this Mac"
+                : "Found on this Mac · \(model.arcSpaceCount) \(model.arcSpaceCount == 1 ? "space" : "spaces")"
             rows.append(OnboardingRowView(id: "onboarding-source-arc", title: "Arc",
-                                          subtitle: "Found on this Mac · \(model.arcSpaceCount) \(model.arcSpaceCount == 1 ? "space" : "spaces")",
-                                          dimmed: false))
+                                          subtitle: subtitle, dimmed: false))
         }
         for name in model.laterBrowsers {
             rows.append(OnboardingRowView(id: "onboarding-source-later-\(name.lowercased())", title: name, subtitle: "Later", dimmed: true))
@@ -393,7 +395,11 @@ final class OnboardingContentView: NSView {
     }
 
     private func spaceRows() -> [OnboardingRowView] {
-        model.spaceRows.map { space in
+        if model.usesArcDirectory {
+            return [OnboardingRowView(id: "onboarding-spaces", title: "Arc spaces",
+                                      subtitle: "Pinned tabs and folders", dimmed: false)]
+        }
+        return model.spaceRows.map { space in
             OnboardingRowView(id: "onboarding-space-\(space.id)", title: space.title,
                               subtitle: "Profile \(space.profileName) · \(space.pinnedCount) pinned", dimmed: false)
         }

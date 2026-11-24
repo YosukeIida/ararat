@@ -313,7 +313,7 @@ func aMalformedSidebarLandsOnTheStoppedImportScreen() throws {
     let (model, directory) = try onboardingTestModel(OnboardingFixtures.malformedSidebar)
     defer { try? FileManager.default.removeItem(at: directory) }
     runImport(model)
-    guard case .error(let message) = model.stage else {
+    guard case .error(let message, _) = model.stage else {
         Issue.record("expected the error stage, got \(model.stage)")
         return
     }
@@ -322,7 +322,7 @@ func aMalformedSidebarLandsOnTheStoppedImportScreen() throws {
     model.retry()
     #expect(model.stage == .progress)
     RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
-    guard case .error(let again) = model.stage else {
+    guard case .error(let again, _) = model.stage else {
         Issue.record("expected the error stage again, got \(model.stage)")
         return
     }

@@ -54,16 +54,7 @@ final class OnboardingCheckState {
 }
 
 extension Runtime {
-    /// The entry is a check-only command until the importer reads real files (O7): the menu item
-    /// and the command bar row exist only while a check runs, and the flow has no data source
-    /// without the fixture. A shipping build therefore cannot reach the window (hide, not disable).
-    static var onboardingEntryVisible: Bool {
-        CommandLine.arguments.contains { $0.hasPrefix("--ararat-check=") || $0.hasPrefix("--ararat-screen=") }
-    }
-
-    /// The command `import_from_arc`: the File menu item and the command bar row both run it.
-    func openOnboarding() {
-        guard Runtime.onboardingEntryVisible else { return }
+    func openOnboardingCheck() {
         guard let path = (root ?? self).quitPath else { return }
         let owner = root ?? self
         if let existing = owner.onboardingWindow {
@@ -282,7 +273,7 @@ extension Runtime {
             browserCheckPhase = 8
         case 8:
             guard let probe = probe(), let model = owner.onboardingWindow?.model else { wait("error model"); return }
-            guard case .error(let message) = probe.stage else { wait("error stage"); return }
+            guard case .error(let message, _) = probe.stage else { wait("error stage"); return }
             check.errorMessage = message
             mark("error_screen", probe.title == "The import stopped")
             mark("error_message", message.contains("sidebar.containers has no container with spaces"))

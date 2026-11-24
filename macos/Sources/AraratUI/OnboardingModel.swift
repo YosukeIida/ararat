@@ -2,16 +2,6 @@ import AppKit
 import AraratKit
 import SwiftUI
 
-/// U27j: the onboarding flow's data and state. The flow is screens only: the Arc sidebar,
-/// windows, key bindings and routing arrive as injected strings, the core's string-based import
-/// runs into a store at the path the caller names (the check's `--ararat-db`), and nothing in this
-/// file reads `~/Library/Application Support/Arc` or the Keychain. It has no API that takes an Arc
-/// path — there is deliberately no "Choose Folder…" seam.
-///
-/// D10: the report and both error screens print `ImportReport` fields and `ImportError`'s message,
-/// nothing else. A line with no producer is dropped, so there is no sign-in line (O5) and the two
-/// Passwords / Sign-in state rows are absent rather than disabled (O4, the site-controls rule).
-
 /// One space as the source screen draws it, from the fixture: the core import has not run yet, so
 /// these counts come from the fixture's own description of Arc.
 public struct OnboardingSpaceSource: Equatable, Sendable {
@@ -175,8 +165,7 @@ public final class OnboardingModel: NSObject, ObservableObject {
         /// report's error field verbatim.
         case siblingFile(String)
         case done
-        /// Screen 7: the import itself stopped. The message is `ImportError`'s own text.
-        case error(String)
+        case error(String, mayHaveImported: Bool)
     }
 
     @Published public private(set) var stage: Stage = .welcome {
@@ -189,8 +178,7 @@ public final class OnboardingModel: NSObject, ObservableObject {
     /// one number whether the setter is the fake or the LaunchServices one.
     public private(set) var defaultBrowserCalls = 0
 
-    /// `var`: the check walks a second and third fixture through the same window; a shipping
-    /// build is only ever given the one its entry supplies.
+    // Why not make this immutable: the check walks multiple fixtures through the same window.
     public var data: OnboardingData
     public let storePath: String
     public let detector: OnboardingSourceDetector
@@ -204,6 +192,8 @@ public final class OnboardingModel: NSObject, ObservableObject {
     public let schedule: ImportScheduler
     /// "Start Fresh", a done window's "Continue" and the close button all end here.
     public var onFinish: (() -> Void)?
+    private var importFromDirectory: (@MainActor () -> Void)?
+    public var usesArcDirectory: Bool { importFromDirectory != nil }
 
     public init(storePath: String, data: OnboardingData,
                 detector: OnboardingSourceDetector = LaunchServicesSourceDetector(),
@@ -215,6 +205,24 @@ public final class OnboardingModel: NSObject, ObservableObject {
         self.defaultBrowser = defaultBrowser
         self.schedule = schedule
         super.init()
+    }
+
+    public convenience init(storePath: String, workspace: WorkspaceAdapter, arcDirectory: URL,
+                            detector: OnboardingSourceDetector = LaunchServicesSourceDetector(),
+                            defaultBrowser: DefaultBrowserSetter = LaunchServicesDefaultBrowser(),
+                            workspaceChanged: @escaping @MainActor @Sendable () -> Void) {
+        self.init(storePath: storePath, data: OnboardingData(sidebar: "", windows: "", keyBindings: "",
+                                                            routing: "", spaces: []),
+                  detector: detector, defaultBrowser: defaultBrowser)
+        importFromDirectory = { [weak self] in
+            workspace.importArc(directory: arcDirectory) { [weak self] result in
+                workspaceChanged()
+                switch result {
+                case .success(let value): self?.finishImport(value.report, warning: value.warning)
+                case .failure(let error): self?.stage = Self.errorStage(error)
+                }
+            }
+        }
     }
 
     /// The shipping path: the import runs on the next main run-loop turn, so the window can draw
@@ -318,26 +326,30 @@ public final class OnboardingModel: NSObject, ObservableObject {
     /// One row per file the import consumes, in the order `arc_sidebar` reads them.
     public static let progressSteps = ["Spaces, tabs, folders and looks", "Folder states", "Keyboard shortcuts", "Air Traffic Control routes"]
 
-    /// Runs the core's string-based import into the store at `storePath`. The error is the
-    /// ImportError message; a sibling file's error is a report field and becomes screen 8.
     private func performImport() {
         guard case .progress = stage else { return }
+        if let importFromDirectory {
+            importFromDirectory()
+            return
+        }
         do {
             let store = try WorkspaceStore.open(path: storePath)
             let result = try store.importArcSidebar(windowId: "onboarding", json: data.sidebar,
                                                     windowsJson: data.windows, keyBindingsJson: data.keyBindings,
                                                     linkRoutingJson: data.routing, ownerProfile: nil)
-            report = result.report
-            summary = OnboardingSummary(report: result.report)
-            lines = Self.reportLines(result.report) + data.fixturePasswordResults.flatMap(\.reportLines)
-            stage = Self.siblingError(result.report).map { .siblingFile($0) } ?? .done
+            finishImport(result.report)
         } catch {
-            stage = .error(Self.errorText(error))
+            stage = Self.errorStage(error)
         }
     }
 
-    /// Screen 7's "Try Again": the same fixture, a fresh progress stage, and the import runs again
-    /// on the next turn. Importing the same strings twice is the core's idempotent override path.
+    private func finishImport(_ report: ImportReport, warning: String? = nil) {
+        self.report = report
+        summary = OnboardingSummary(report: report)
+        lines = Self.reportLines(report) + data.fixturePasswordResults.flatMap(\.reportLines)
+        stage = (warning ?? Self.siblingError(report)).map { .siblingFile($0) } ?? .done
+    }
+
     public func retry() {
         guard case .error = stage else { return }
         enterProgress()
@@ -351,7 +363,7 @@ public final class OnboardingModel: NSObject, ObservableObject {
 
     /// Screen 7's "Copy Details": the ImportError's message, the only detail there is (D10).
     public func copyDetails() {
-        guard case .error(let message) = stage else { return }
+        guard case .error(let message, _) = stage else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(message, forType: .string)
     }
@@ -423,12 +435,14 @@ public final class OnboardingModel: NSObject, ObservableObject {
         return lines
     }
 
-    static func errorText(_ error: Error) -> String {
-        if let core = error as? CoreError {
-            switch core {
-            case .Edit(let message), .Import(let message), .Store(let message), .Live(let message): return message
-            }
+    private static func errorStage(_ error: Error) -> Stage {
+        switch error as? CoreError {
+        case .Store(let message):
+            return .error(message, mayHaveImported: true)
+        case .Edit(let message), .Import(let message), .Live(let message):
+            return .error(message, mayHaveImported: false)
+        case nil:
+            return .error(error.localizedDescription, mayHaveImported: false)
         }
-        return error.localizedDescription
     }
 }

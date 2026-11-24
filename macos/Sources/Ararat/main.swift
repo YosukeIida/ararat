@@ -2685,9 +2685,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       little.identifier = NSUserInterfaceItemIdentifier("new_little_window")
       let index = file.items.firstIndex { $0.action == NSSelectorFromString("newIncognitoWindow:") }.map { $0 + 1 } ?? 0
       file.insertItem(little, at: index)
-      // U27j O7: "Import from Arc…" is a command only. The importer does not read real files yet,
-      // so a shipping build has no data source and the item is present only while a check runs
-      // (hide, not disable: the site-controls rule). Its own block, like the Little Window's.
+      // Why not register this as a core command: a Swift-only entry can stay out of Shortcuts.
       if Runtime.onboardingEntryVisible {
         let onboarding = NSMenuItem(title: "Import from Arc…", action: #selector(importFromArc(_:)), keyEquivalent: "")
         onboarding.target = self
@@ -2697,7 +2695,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
-  @objc func importFromArc(_ sender: Any?) { openOnboarding() }
+  @objc func importFromArc(_ sender: Any?) {
+    let owner = root ?? self
+    let windows = [owner] + owner.children
+    let key = windows.first { $0.host?.window().isKeyWindow == true }
+    Runtime.commandWindow(key: key, regular: windows.filter { $0.hasUsableHost && !$0.isPrivateWindow }, root: owner)
+      .openOnboarding()
+  }
 
   @objc func coreMenuCommand(_ item: NSMenuItem) {
     let owner = root ?? self
@@ -3230,8 +3234,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
       switch result {
       case .success(let session):
         let base = CommandBarSessionStore(session: session)
-        // U27j O7: the "Import from Arc…" row rides only a check, the same gate as its menu item.
-        presenter.applyStore(Runtime.onboardingEntryVisible ? OnboardingCommandStore(base: base) : base)
+        let showImport = !presenter.controller.privateWindow && Runtime.onboardingEntryVisible
+        presenter.applyStore(showImport ? OnboardingCommandStore(base: base) : base)
       case .failure(let error):
         self.report(error)
         presenter.close()
