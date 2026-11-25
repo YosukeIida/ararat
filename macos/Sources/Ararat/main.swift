@@ -1499,7 +1499,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
     sidebar.onEditURL = { [weak self] in self?.openCommandBar(.editURL) }
     self.sidebar = sidebar
-    sidebar.onFaviconRowsChanged = { [weak self] in self?.refreshSidebarFavicons() }
+    sidebar.onFaviconRowsChanged = { [weak self] in self?.scheduleSidebarRowPresentation() }
+    sidebar.onMute = { [weak self] id, muted in self?.adapter?.setMuted(muted, item: id) }
     self.container = container
     if !isPrivateWindow {
       container.onPresentationChanged = { [weak self] in
@@ -1568,7 +1569,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       }
       self?.updateSidebar(snapshot)
       for controller in self?.littleWindows ?? [] { controller.originSnapshotChanged(snapshot) }
-      self?.refreshSidebarRowState(snapshot)
+      self?.refreshSidebarSettings(snapshot)
       container?.selectionChanged()
       container?.privateEmptyShown = self?.isPrivateWindow == true && snapshot.selectedId == nil
       if check {
@@ -1604,10 +1605,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
         self.sliceActive = strip.tabs.first { $0.liveId == strip.active }?.item
       }
       self.recordUnread(transaction)
-      // R5: a crashed renderer is reported by the strip, not by a snapshot.
-      self.sidebar?.crashedItems = Set(self.adapter?.crashedItems ?? [])
-      self.sidebar?.rowStates = self.adapter?.rowStates ?? [:]
-      self.refreshSidebarFavicons()
+      self.scheduleSidebarRowPresentation()
       let activeItem = host.activeItemId()
       let headerState = activeItem.flatMap { self.adapter?.rowStates[$0] }
       self.container?.header.canGoBack = headerState?.canGoBack ?? false
@@ -1969,7 +1967,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
        let url = liveURL.flatMap { $0.isEmpty ? nil : $0 } ?? row.url {
       sidebar?.focusedPane = (id, url)
     } else { sidebar?.focusedPane = nil }
-    sidebar?.update(snapshot: snapshot)
+    if let sidebar {
+      stageSidebarRowPresentation(sidebar)
+      sidebar.update(snapshot: snapshot)
+    }
   }
 
   func show(_ snapshot: WorkspaceSnapshot) {
@@ -1981,7 +1982,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     updatePageVisibility(snapshot)
     updateSettingsSnapshot(previous: previous)
     updateSidebar(snapshot)
-    refreshSidebarRowState(snapshot)
+    refreshSidebarSettings(snapshot)
     container?.selectionChanged()
     refreshOtherWindows()
   }
@@ -2306,13 +2307,9 @@ final class Runtime: NSObject, NSMenuItemValidation {
   func recordUnread(_ transaction: LiveTransaction) {
     guard let strip = transaction.strips.first(where: { $0.window == windowID }) else { return }
     unread.apply(strip: strip)
-    sidebar?.unreadItems = unread.unread
   }
 
-  // The sidebar's per-window row state: the live strip's crashed tabs on every snapshot, its
-  // unread ids, and the settings row switch seeded once (the section's chevron rides in the
-  // space snapshot).
-  func refreshSidebarRowState(_ snapshot: WorkspaceSnapshot) {
+  func refreshSidebarSettings(_ snapshot: WorkspaceSnapshot) {
     guard let sidebar else { return }
     // The seed and the first transaction, as U26b traced theirs: a check with no native tab
     // and an empty row set is told apart from a check whose seed never landed.
@@ -2323,10 +2320,6 @@ final class Runtime: NSObject, NSMenuItemValidation {
       let profiles = seed?.spaces.map(\.profileName) ?? []
       FileHandle.standardError.write(Data("ararat-trace: sidebar-seed db=\(quitPath ?? "") shown=\(seed?.shownSpaceId ?? "") profiles=\(profiles) rows=\(rows)\n".utf8))
     }
-    sidebar.crashedItems = Set(adapter?.crashedItems ?? [])
-    sidebar.rowStates = adapter?.rowStates ?? [:]
-    sidebar.onMute = { [weak self] id, muted in self?.adapter?.setMuted(muted, item: id) }
-    sidebar.unreadItems = unread.unread
     // D4: the settings record lives in the regular workspace. A private window's own workspace
     // always holds the built-in values, so it reads the regular one (U27d review 1 M2).
     guard let settingsSource = settingsSource(), seededNewTabRow != snapshot.shownSpaceId else { return }
@@ -2781,9 +2774,33 @@ final class Runtime: NSObject, NSMenuItemValidation {
     ([owner] + owner.children).first { $0.host?.window().isKeyWindow == true }?.clearUndo.run()
   }
 
-  func refreshSidebarFavicons() {
-    guard hasUsableHost, let host, let sidebar else { return }
-    let before = sidebar.favicons
+  private var sidebarRowPresentationScheduled = false
+
+  private func stageSidebarRowPresentation(_ sidebar: SidebarView) {
+    sidebar.stageRowPresentation(rowStates: adapter?.rowStates ?? [:],
+                                 crashedItems: adapter?.crashedItems ?? [], unreadItems: unread.unread)
+  }
+
+  func scheduleSidebarRowPresentation() {
+    guard let sidebar else { return }
+    stageSidebarRowPresentation(sidebar)
+    guard !sidebarRowPresentationScheduled else { return }
+    sidebarRowPresentationScheduled = true
+    RunLoop.main.perform(inModes: [.common, .modalPanel]) { [weak self, weak sidebar] in
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        self.sidebarRowPresentationScheduled = false
+        guard let sidebar, self.sidebar === sidebar else {
+          self.scheduleSidebarRowPresentation()
+          return
+        }
+        self.flushSidebarRowPresentation(sidebar)
+      }
+    }
+  }
+
+  private func flushSidebarRowPresentation(_ sidebar: SidebarView) {
+    guard hasUsableHost, let host else { return }
     var live: [String: NSImage?] = [:]
     for tab in (host.tabs() as? [any ARTabAPI]) ?? [] {
       if let id = tab.itemId { live.updateValue(tab.favicon, forKey: id) }
@@ -2791,20 +2808,22 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let space = snapshot.spaces.first { $0.id == snapshot.shownSpaceId }
     let profile = isPrivateWindow ? nil : space?.profileName
     sidebarFaviconCache.useProfile(profile)
+    let favicons: [String: NSImage]
     if let space, let profile {
       let existing = snapshot.spaces.filter { $0.profileName == profile }.flatMap {
         $0.favorites + $0.pinned + $0.today
       }
-      sidebar.favicons = sidebarFaviconCache.images(existing: existing, shown: sidebar.faviconRows(in: space.id),
+      favicons = sidebarFaviconCache.images(existing: existing, shown: sidebar.faviconRows(in: space.id),
                                                    live: live, switcher: switcherUnloadedFavicons, request: { url, completion in
         host.favicon(forPageURL: url, profileDirectory: profile, completion: completion)
       }, changed: { [weak self] in
-        DispatchQueue.main.async { [weak self] in self?.refreshSidebarFavicons() }
+        self?.scheduleSidebarRowPresentation()
       })
     } else {
-      sidebar.favicons = live.compactMapValues { $0 }
+      favicons = live.compactMapValues { $0 }
     }
-    tabSwitcher?.refreshImages(Set(before.keys).union(sidebar.favicons.keys).filter { before[$0] !== sidebar.favicons[$0] })
+    let changedIcons = sidebar.applyRowPresentation { $0.favicons = favicons }
+    tabSwitcher?.refreshImages(changedIcons)
   }
 
   func cycleTabs(backwards: Bool, holdForCheck: Bool = false) {
@@ -2824,7 +2843,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
         return tab.flatMap { self?.adapter?.switcherThumbnail(item: id, live: $0.liveId) }
       }, favicon: { [weak self] id in
         guard self?.snapshot.shownSpaceId == space else { return nil }
-        return self?.sidebar?.favicons[id]
+        return self?.sidebar?.rowPresentation.favicons[id]
       })
     tabSwitcher = switcher
     if let tabSwitcherScreenCheck {
@@ -2856,7 +2875,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       }
       let recent = try? result.get()
       self.switcherUnloadedFavicons = recent?.unloaded ?? [:]
-      self.refreshSidebarFavicons()
+      self.scheduleSidebarRowPresentation()
       let rows = recent?.rows ?? []
       self.commandBarTrace("cycle-tabs rows=\(rows.count)")
       switcher.load(rows)
@@ -9180,14 +9199,8 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
               sidebar.favoriteTileMarksForCheck(id: icon.id) != nil,
               sidebar.favoriteTileMarksForCheck(id: playing.id) != nil,
               sidebar.favoriteTileMarksForCheck(id: favorite.id) != nil else { return }
-        let savedFavicons = sidebar.favicons
-        let savedRowStates = sidebar.rowStates
-        let savedUnread = sidebar.unreadItems
-        defer {
-          sidebar.rowStates = savedRowStates
-          sidebar.favicons = savedFavicons
-          sidebar.unreadItems = savedUnread
-        }
+        let savedPresentation = sidebar.rowPresentation
+        defer { sidebar.applyRowPresentation { $0 = savedPresentation } }
         let favicon = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { rect in
           NSColor.systemBlue.setFill()
           NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
@@ -9195,10 +9208,12 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
           NSBezierPath(ovalIn: rect.insetBy(dx: 6, dy: 6)).fill()
           return true
         }
-        sidebar.favicons[icon.id] = favicon
-        sidebar.rowStates[icon.id] = .init(loading: true, audible: false, muted: false, canGoBack: false, canGoForward: false)
-        sidebar.rowStates[playing.id] = .init(loading: false, audible: true, muted: false, canGoBack: false, canGoForward: false)
-        sidebar.unreadItems.insert(favorite.id)
+        sidebar.applyRowPresentation {
+          $0.favicons[icon.id] = favicon
+          $0.rowStates[icon.id] = .init(loading: true, audible: false, muted: false, canGoBack: false, canGoForward: false)
+          $0.rowStates[playing.id] = .init(loading: false, audible: true, muted: false, canGoBack: false, canGoForward: false)
+          $0.unreadItems.insert(favorite.id)
+        }
         if sidebar.favoriteTileMarksForCheck(id: icon.id)?.favicon == true,
            sidebar.favoriteTileMarksForCheck(id: playing.id)?.audio == true,
            sidebar.favoriteTileMarksForCheck(id: favorite.id)?.unread == true {

@@ -129,6 +129,11 @@ final class TabSwitcherScreenCheck {
         scenarioItems.removeAll()
         do {
             try await showSpace(runtime, space)
+            if let window = runtime.host?.window(), !window.isKeyWindow {
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+                try await wait("scenario key window") { window.isKeyWindow }
+            }
             try await body()
         } catch {
             let pending = names.filter { conditions[$0] == nil && skipped[$0] == nil }
@@ -568,7 +573,7 @@ final class TabSwitcherScreenCheck {
             try await awaitPicture(runtime, item, "red")
             guard let target = tab(runtime, item) else { throw CheckFailure(condition: "blank target tab missing") }
             try await wait("red fixture favicon in sidebar", observed: { target.checkFaviconState() }) {
-                self.color(runtime.sidebar?.favicons[item], "yellow", at: 0.5)
+                self.color(runtime.sidebar?.rowPresentation.favicons[item], "yellow", at: 0.5)
             }
             let faviconBeforeCommit = target.checkFaviconState()
             let live = target.liveId
@@ -601,14 +606,14 @@ final class TabSwitcherScreenCheck {
                 "tile_not_filled": tile?.fillsPreview == false,
                 "tile_size_22pt": tile?.size == NSSize(width: 22, height: 22), "tile_is_globe": matchesGlobe,
                 "no_live_favicon": !hasLiveFavicon,
-                "no_sidebar_favicon": runtime.sidebar?.favicons[item] == nil,
+                "no_sidebar_favicon": runtime.sidebar?.rowPresentation.favicons[item] == nil,
             ], observed: [
                 "item": item, "live": live, "current_live": tab(runtime, item)?.liveId as Any? ?? NSNull(),
                 "url": target.url, "previous_navigation_count": navigationCount, "current_navigation_count": target.navigationCount,
                 "source_before_commit": sourceBeforeCommit, "source_after_commit": sourceAfterCommit, "source": source,
                 "tile": previewDetails(tile), "matches_globe": matchesGlobe, "has_live_favicon": hasLiveFavicon,
                 "favicon_before_commit": faviconBeforeCommit, "favicon": target.checkFaviconState(),
-                "has_sidebar_favicon": runtime.sidebar?.favicons[item] != nil,
+                "has_sidebar_favicon": runtime.sidebar?.rowPresentation.favicons[item] != nil,
                 "readbacks": readbacks(for: [live], since: mark),
             ])
         }
@@ -847,6 +852,8 @@ final class TabSwitcherScreenCheck {
         }
 
         await scene("private_previews", "private_unpainted_globe", "private_memory_only", "private_close_releases") {
+            // The previous scene can close the last tab and destroy the Browser that opens incognito.
+            _ = try await open(runtime, url: url("green"))
             let diskBefore = Result { try diskPreviewFiles() }
             let privateToken = UUID().uuidString
             host.checkCreateIncognito()
@@ -941,7 +948,7 @@ final class TabSwitcherScreenCheck {
                     "tile_present": tile != nil, "tile_not_filled": tile?.fillsPreview == false,
                     "tile_size_22pt": tile?.size == NSSize(width: 22, height: 22), "tile_has_image": tile?.image != nil,
                     "tile_is_globe": matchesGlobe, "no_live_favicon": liveTab?.favicon == nil,
-                    "no_sidebar_favicon": child.sidebar?.favicons[blank] == nil,
+                    "no_sidebar_favicon": child.sidebar?.rowPresentation.favicons[blank] == nil,
                     "no_saved_favicon": savedFavicon == nil,
                 ], observed: [
                     "item": blank, "live": live, "current_live": liveTab?.liveId as Any? ?? NSNull(), "rows": rows,
@@ -950,7 +957,7 @@ final class TabSwitcherScreenCheck {
                     "loading": liveTab?.isLoading as Any? ?? NSNull(), "tile": previewDetails(tile),
                     "globe_reference_available": expectedGlobe != nil, "matches_globe": matchesGlobe,
                     "has_live_favicon": liveTab?.favicon != nil, "saved_favicon_items": child.switcherUnloadedFavicons.keys.sorted(),
-                    "favicon": liveTab?.checkFaviconState() ?? [:], "has_sidebar_favicon": child.sidebar?.favicons[blank] != nil,
+                    "favicon": liveTab?.checkFaviconState() ?? [:], "has_sidebar_favicon": child.sidebar?.rowPresentation.favicons[blank] != nil,
                     "readbacks": events.dropFirst(mark).filter { $0["live"] as? String == live },
                 ])
             }

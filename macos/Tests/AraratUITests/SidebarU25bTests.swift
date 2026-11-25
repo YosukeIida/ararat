@@ -47,7 +47,7 @@ func crashedRowsDrawTheWarningGlyphAtFortyFivePercent() throws {
     let space = u25Space(today: [u25Row("a"), u25Row("b")])
     let (window, sidebar) = u25Sidebar(space)
     defer { window.contentView = nil }
-    sidebar.crashedItems = ["a"]
+    sidebar.applyRowPresentation { $0.crashedItems = ["a"] }
     func row(_ id: String) throws -> SidebarRowView {
         try #require(u25Descendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == id })
     }
@@ -71,10 +71,10 @@ func unreadRowsShowTheDotUntilTheyAreShown() throws {
         try #require(u25Descendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == id })
     }
     #expect(!(try row("a")).unreadDotVisible)
-    sidebar.unreadItems = ["a"]
+    sidebar.applyRowPresentation { $0.unreadItems = ["a"] }
     #expect((try row("a")).unreadDotVisible)
     #expect(!(try row("b")).unreadDotVisible)
-    sidebar.unreadItems = []
+    sidebar.applyRowPresentation { $0.unreadItems = [] }
     #expect(!(try row("a")).unreadDotVisible)
 }
 

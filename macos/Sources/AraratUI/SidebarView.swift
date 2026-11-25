@@ -266,6 +266,7 @@ public final class SidebarView: NSView {
     private var pendingPinHint: (id: String, staleSelection: String?)?
     var renameHintClock: () -> CFTimeInterval = CACurrentMediaTime
     private var rowViews: [String: SidebarRowView] = [:]
+    private var splitOwners: [String: String] = [:]
     private var noTabsRows: [String: SidebarNoTabsRow] = [:]
     private var retiringRows: [String: SidebarRowView] = [:]
     private var fadeFrame: (id: String, frame: NSRect)?
@@ -293,21 +294,38 @@ public final class SidebarView: NSView {
     // U25b: the app’s per-window row state — the row switch from the core’s settings record
     // and the live strip’s crashed and unread tabs. The section’s chevron rides in the space
     // snapshot (pinned_collapsed), so every window shows the same one.
-    public var newTabRowShown = true { didSet { reload() } }
+    public var newTabRowShown = true {
+        didSet {
+            guard oldValue != newTabRowShown else { return }
+            if newTabRowShown {
+                let list = rows.arrangedSubviews
+                let index = list.firstIndex(of: todayDivider).map { $0 + 1 } ?? list.count
+                rows.insertArrangedSubview(newTabRow, at: index)
+            } else {
+                newTabRow.removeFromSuperview()
+            }
+        }
+    }
     /// U27d: the Appearance pane's Tooltips switch, applied to this sidebar's tooltip. Off, row
     /// tooltips and button tooltips stay silent; the rows' accessibility help is unchanged.
     public var tooltipsShown = true { didSet { tooltip.isEnabled = tooltipsShown } }
     // The Spaces pane's Natural / Reversed choice (U27c): one setting for every window, read
     // from the workspace's settings record and handed to the paging pipeline.
     public var spaceScrollDirection: SpaceScrollDirection = .natural
-    public var rowStates: [String: EngineAdapter.RowState] = [:] { didSet { applyRowStatus() } }
-    public var favicons: [String: NSImage] = [:] {
-        didSet {
-            guard oldValue != favicons else { return }
-            for view in rowViews.values { view.updateFavicons(favicons) }
-            for tile in favoriteTiles.values { applyFavoriteStatus(tile) }
-            dragCopyView?.updateFavicons(favicons)
-        }
+    public struct RowPresentation {
+        public var rowStates: [String: EngineAdapter.RowState] = [:]
+        public var favicons: [String: NSImage] = [:]
+        public var crashedItems: Set<String> = []
+        public var unreadItems: Set<String> = []
+    }
+
+    public private(set) var rowPresentation = RowPresentation()
+    private var paintedRowPresentation = RowPresentation()
+
+    public func stageRowPresentation(rowStates: [String: EngineAdapter.RowState], crashedItems: Set<String>, unreadItems: Set<String>) {
+        rowPresentation.rowStates = rowStates
+        rowPresentation.crashedItems = crashedItems
+        rowPresentation.unreadItems = unreadItems
     }
     public var onFaviconRowsChanged: (() -> Void)?
 
@@ -319,8 +337,6 @@ public final class SidebarView: NSView {
         }
     }
     public var onMute: ((String, Bool) -> Void)?
-    public var crashedItems: Set<String> = [] { didSet { applyRowStatus() } }
-    public var unreadItems: Set<String> = [] { didSet { applyRowStatus() } }
     public var onNewTab: (() -> Void)?
     public var onClearToday: (() -> Void)?
     // U26f: a private window is one space with Today only: no pins, favourites, folders, dock
@@ -1761,6 +1777,7 @@ public final class SidebarView: NSView {
         for id in Array(noTabsRows.keys) where !ids.contains(id) {
             noTabsRows.removeValue(forKey: id)?.removeFromSuperview()
         }
+        splitOwners.removeAll(keepingCapacity: true)
         var ordered: [NSView] = pinned.filter { !hidden.contains($0.id) }.map { listView(for: $0) }
         if today.isEmpty {
             todayDivider.removeFromSuperview()
@@ -1915,15 +1932,17 @@ public final class SidebarView: NSView {
             if target.action == .archive { self.onArchive?(target.id) } else { self.onClose?(target.id) }
         }
         view.onMute = { [weak self] id, muted in self?.onMute?(id, muted) }
-        view.status = rowStates[row.id]
         view.closeCaps = closeCaps
         view.update(row: row, selected: row.id == selectedID)
-        view.crashed = crashedItems.contains(row.id)
-        view.unread = unreadItems.contains(row.id)
         if row.kind == .split {
-            view.updateSegments(paneRows(of: row.id), active: snapshot.selectedId, crashed: crashedItems)
+            let panes = paneRows(of: row.id)
+            view.updateSegments(panes, active: snapshot.selectedId, crashed: rowPresentation.crashedItems)
+            for pane in panes {
+                splitOwners[pane.id] = row.id
+                applyPanePresentation(view, id: pane.id)
+            }
         } else { view.updateSegments([], active: nil) }
-        view.updateFavicons(favicons)
+        applyPresentation(view)
         view.acceptsKeyboardFocus = !isScrollPreview
         return view
     }
@@ -1939,18 +1958,46 @@ public final class SidebarView: NSView {
         return view
     }
 
-    private func applyRowStatus() {
-        for (id, view) in rowViews {
-            view.status = rowStates[id]
-            view.crashed = crashedItems.contains(id)
-            view.unread = unreadItems.contains(id)
+    @discardableResult
+    public func applyRowPresentation(_ update: (inout RowPresentation) -> Void) -> Set<String> {
+        let before = paintedRowPresentation
+        update(&rowPresentation)
+        let after = rowPresentation
+        paintedRowPresentation = after
+        let icons = Set(before.favicons.keys).union(after.favicons.keys).filter { before.favicons[$0] !== after.favicons[$0] }
+        var changed = before.crashedItems.symmetricDifference(after.crashedItems)
+        changed.formUnion(before.unreadItems.symmetricDifference(after.unreadItems))
+        changed.formUnion(icons)
+        if before.rowStates != after.rowStates {
+            let states = Set(before.rowStates.keys).union(after.rowStates.keys)
+            changed.formUnion(states.filter { before.rowStates[$0] != after.rowStates[$0] })
         }
-        for tile in favoriteTiles.values { applyFavoriteStatus(tile) }
+        for id in changed {
+            if let view = rowViews[id] { applyPresentation(view) }
+            if let tile = favoriteTiles[id] { applyFavoriteStatus(tile) }
+            if let owner = splitOwners[id], let view = rowViews[owner] { applyPanePresentation(view, id: id) }
+        }
+        if let copy = dragCopyView {
+            if changed.contains(copy.row.id) { applyPresentation(copy) }
+            for id in copy.paneIDs where changed.contains(id) { applyPanePresentation(copy, id: id) }
+        }
+        return icons
+    }
+
+    private func applyPresentation(_ view: SidebarRowView) {
+        let id = view.row.id
+        view.updatePresentation(status: rowPresentation.rowStates[id], favicon: rowPresentation.favicons[id],
+                                crashed: rowPresentation.crashedItems.contains(id), unread: rowPresentation.unreadItems.contains(id))
+    }
+
+    private func applyPanePresentation(_ view: SidebarRowView, id: String) {
+        view.updatePanePresentation(id: id, favicon: rowPresentation.favicons[id], crashed: rowPresentation.crashedItems.contains(id))
     }
 
     private func applyFavoriteStatus(_ tile: FavoriteTile) {
         let id = tile.row.id
-        tile.updateStatus(favicon: favicons[id], status: rowStates[id], unread: unreadItems.contains(id))
+        tile.updateStatus(favicon: rowPresentation.favicons[id], status: rowPresentation.rowStates[id],
+                          unread: rowPresentation.unreadItems.contains(id))
     }
 
     // The row the core says is a folder's empty line is drawn by its own view, so the rows
@@ -2449,9 +2496,7 @@ public final class SidebarView: NSView {
             preview.spaceListOrigins = spaceListOrigins
             preview.selectedID = selectedID
             if reload { preview.showSpace(at: index, animatedReveal: false, notify: false) }
-            preview.rowStates = rowStates
-            preview.favicons = favicons
-            preview.unreadItems = unreadItems
+            preview.applyRowPresentation { $0 = rowPresentation }
             preview.wantsLayer = true
             preview.setAccessibilityHidden(true)
             let page = NSView(frame: spaceViewport.bounds)
@@ -2854,9 +2899,10 @@ extension SidebarView {
             addSubview(copy)
             // A dragged split draws the same segments as its row does (the U20 board's split row).
             if state.row.kind == .split {
-                copy.updateSegments(paneRows(of: state.row.id), active: snapshot.selectedId, crashed: crashedItems)
+                copy.updateSegments(paneRows(of: state.row.id), active: snapshot.selectedId, crashed: rowPresentation.crashedItems)
+                for id in copy.paneIDs { applyPanePresentation(copy, id: id) }
             }
-            copy.updateFavicons(favicons)
+            applyPresentation(copy)
             dragCopyView = copy
             rowViews[state.row.id]?.dragSource = true
             listScroll.stopReveal()

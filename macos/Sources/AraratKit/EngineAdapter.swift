@@ -76,7 +76,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     private var dragSplit: String?
     private var appliedSplitFrames: [String: NSRect] = [:]
     private var measurementDragOrigin: NSPoint?
-    public struct RowState {
+    public struct RowState: Equatable {
         public let loading: Bool
         public let audible: Bool
         public let muted: Bool

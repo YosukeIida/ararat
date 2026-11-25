@@ -63,7 +63,7 @@ func windowAccentFollowsLookPreviewSpaceSwitchAndPrivateMode() throws {
         #expect(pull.plus.strokeColor == SpaceAccent.visible(accent, on: .white).cgColor)
         pull.update(excess: 0)
         let row = try #require(descendants(sidebar).compactMap { $0 as? SidebarRowView }.first)
-        sidebar.unreadItems = [row.row.id]
+        sidebar.applyRowPresentation { $0.unreadItems = [row.row.id] }
         #expect(row.unreadDotVisible)
         let dot = try #require(row.subviews.first { $0.layer?.cornerRadius == SidebarMetrics.unreadDotSize / 2 })
         let dotBackdrop = try #require(SidebarPanelView.backdrop(behind: dot, overlaidBy: row.subviews.first?.layer?.backgroundColor))
@@ -175,7 +175,7 @@ func sidebarAccentPartsHaveThreeToOneContrastOnTheLook() throws {
     let pull = try #require(descendants(sidebar).compactMap { $0 as? SpacePullIndicator }.first)
     let progress = sidebar.libraryButton
     let buttons: [NSButton] = [sidebar.urlField, sidebar.urlFieldCopyButton, sidebar.urlFieldSiteControlsButton]
-    sidebar.unreadItems = [row.row.id]
+    sidebar.applyRowPresentation { $0.unreadItems = [row.row.id] }
     progress.progress = .fraction(0.25)
 
     for (name, mode, opacity) in [
@@ -287,7 +287,7 @@ func unselectedSidebarRowsKeepReadableForegrounds() throws {
             let title = try #require(row.subviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == row.row.title })
             let icon = try #require(row.subviews.compactMap { $0 as? NSImageView }.first)
             if row.row.kind == .tab {
-                row.status = EngineAdapter.RowState(loading: false, audible: true, muted: false, canGoBack: false, canGoForward: false)
+                row.updatePresentation(status: EngineAdapter.RowState(loading: false, audible: true, muted: false, canGoBack: false, canGoForward: false))
             }
             let audio = row.subviews.compactMap { $0 as? NSButton }.first { !$0.isHidden && $0.accessibilityLabel() == "Mute Tab" }
             if row.row.kind == .tab { #expect(audio != nil) }

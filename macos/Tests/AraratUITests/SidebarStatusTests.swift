@@ -16,7 +16,7 @@ func sidebarRowReportsLoadingAndAudioAndSpeakerDoesNotSelect() {
     var mutes: [Bool] = []
     let view = SidebarRowView(row: row(.tab), selected: false) { _ in selections += 1 }
     view.onMute = { _, value in mutes.append(value) }
-    view.status = state(true, true, false)
+    view.updatePresentation(status: state(true, true, false))
     #expect(view.loadingVisible)
     #expect(view.audioLabel == "Mute Tab")
     #expect((view.accessibilityValue() as? String)?.contains("Loading") == true)
@@ -24,21 +24,21 @@ func sidebarRowReportsLoadingAndAudioAndSpeakerDoesNotSelect() {
     #expect(view.accessibilityCustomActions()?.contains { $0.name == "Mute Tab" } == true)
     view.pressAudioForCheck()
     #expect(mutes == [true] && selections == 0)
-    view.status = state(false, false, true)
+    view.updatePresentation(status: state(false, false, true))
     #expect(!view.loadingVisible && view.audioLabel == "Unmute Tab")
     #expect((view.accessibilityValue() as? String)?.contains("Muted") == true)
     view.pressAudioForCheck()
     #expect(mutes == [true, false] && selections == 0)
     for kind in [RowKind.folder, .split] {
         view.update(row: row(kind), selected: false)
-        view.status = state(true, true, false)
+        view.updatePresentation(status: state(true, true, false))
         #expect(!view.loadingVisible && view.audioLabel == nil)
     }
     let favorite = FavoriteTile(row: row(.tab)) { _ in }
     #expect(favorite.glyphLabel.stringValue == "I")
     #expect(!favorite.subviews.contains { $0 is NSProgressIndicator })
     view.update(row: row(.tab), selected: false)
-    view.crashed = true
+    view.updatePresentation(status: state(true, true, false), crashed: true)
     #expect(!view.loadingVisible)
 }
 
@@ -62,13 +62,16 @@ func favoriteTileDrawsSharedFaviconAndLiveMarks() throws {
     let favicon = NSImage(size: NSSize(width: 16, height: 16))
     #expect(!tile.glyphBox.isHidden && tile.glyphLabel.stringValue == "I")
     #expect(tile.faviconView.isHidden && tile.audioMark.isHidden && tile.unreadDot.isHidden)
-    sidebar.favicons[row.id] = favicon
+    sidebar.applyRowPresentation { $0.favicons[row.id] = favicon }
     #expect(tile.faviconView.image === favicon && rowIcon.image === favicon)
     #expect(tile.glyphBox.isHidden && !tile.faviconView.isHidden)
 
-    sidebar.rowStates[row.id] = .init(loading: true, audible: true, muted: false, canGoBack: false, canGoForward: false)
-    sidebar.unreadItems.insert(row.id)
-    sidebar.favicons.removeAll()
+    sidebar.stageRowPresentation(
+        rowStates: [row.id: .init(loading: true, audible: true, muted: false, canGoBack: false, canGoForward: false)],
+        crashedItems: [], unreadItems: [])
+    #expect(!rowView.loadingVisible && tile.unreadDot.isHidden)
+    sidebar.stageRowPresentation(rowStates: sidebar.rowPresentation.rowStates, crashedItems: [], unreadItems: [row.id])
+    sidebar.applyRowPresentation { $0.favicons.removeAll() }
     #expect(rowView.loadingVisible)
     #expect(tile.faviconView.image === favicon && !tile.faviconView.isHidden)
     #expect(!tile.audioMark.isHidden && !tile.unreadDot.isHidden)
@@ -83,13 +86,13 @@ func favoriteTileDrawsSharedFaviconAndLiveMarks() throws {
     #expect(audioBottom == 4 && abs(dotTop - 6.5) <= 0.5)
 
     let playing = tile.audioMark.image
-    sidebar.rowStates[row.id] = .init(loading: false, audible: true, muted: true, canGoBack: false, canGoForward: false)
+    sidebar.applyRowPresentation { $0.rowStates[row.id] = .init(loading: false, audible: true, muted: true, canGoBack: false, canGoForward: false) }
     #expect(!tile.audioMark.isHidden && tile.audioMark.image != nil && tile.audioMark.image !== playing)
     #expect(tile.accessibilityValue() as? String == "Unread, Muted")
     #expect(tile.faviconView.isHidden && !tile.glyphBox.isHidden)
-    sidebar.rowStates.removeAll()
+    sidebar.applyRowPresentation { $0.rowStates.removeAll() }
     #expect(tile.accessibilityValue() as? String == "Unread")
-    sidebar.unreadItems.removeAll()
+    sidebar.applyRowPresentation { $0.unreadItems.removeAll() }
     #expect(tile.audioMark.isHidden && tile.unreadDot.isHidden)
     #expect(tile.accessibilityValue() == nil)
 }
