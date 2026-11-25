@@ -122,7 +122,7 @@ func closeMiddleMovesOnlyRowsBelowAndRetainsInstances() throws {
 }
 
 @Test @MainActor
-func closeLastFadesThenRemovesThroughTheSameRemovalPoint() throws {
+func closeLastFadesThenRemovesThroughTheSameRemovalPoint() async throws {
     for ids in [["a", "b"], ["b"]] {
         let sidebar = closeSidebar(closeSnapshot(ids, selected: "b", pinned: true))
         let row = try #require(closeViews(sidebar).first { $0.row.id == "b" })
@@ -139,11 +139,32 @@ func closeLastFadesThenRemovesThroughTheSameRemovalPoint() throws {
         #expect(!row.accessibilityPerformPress())
         #expect(closeViews(sidebar).filter { $0 !== row }.allSatisfy { $0.layer?.animation(forKey: "row.close.move") == nil })
         sidebar.update(snapshot: next)
+        #expect(row.superview === sidebar)
+        CATransaction.flush()
+        try await waitUntil { row.superview == nil }
         sidebar.layoutSubtreeIfNeeded()
         #expect(row.superview == nil)
         let fresh = closeSidebar(next)
         #expect(ReuseTree(sidebar, in: sidebar) == ReuseTree(fresh, in: fresh))
     }
+}
+
+@Test @MainActor
+func duplicateSnapshotKeepsRowsAndSkipsVisibleRowWork() throws {
+    let initial = closeSnapshot(["a", "b"], selected: "a", pinned: false)
+    let sidebar = closeSidebar(initial)
+    let rows = closeViews(sidebar)
+    var changes = 0
+    sidebar.onFaviconRowsChanged = { changes += 1 }
+    sidebar.update(snapshot: initial)
+    #expect(changes == 0)
+    var next = initial
+    next.spaces[0].today[1].title = "New title"
+    sidebar.update(snapshot: next)
+    #expect(changes == 1)
+    #expect(closeViews(sidebar).map(ObjectIdentifier.init) == rows.map(ObjectIdentifier.init))
+    #expect(closeViews(sidebar).first { $0.row.id == "b" }?.row.title == "New title")
+    #expect(sidebar.selectedRowID == "a")
 }
 
 @Test @MainActor
@@ -289,7 +310,7 @@ func commandWClosesTheSelectedSplitAndContinuesToTheNextTab() throws {
 }
 
 @Test @MainActor
-func closingATerminalSplitFadesItsLastMember() throws {
+func closingATerminalSplitFadesItsLastMember() async throws {
     let split = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "split", title: "", url: nil, depth: 0, kind: .split, unloaded: false, lastSelectedAt: nil)
     let members = ["b", "c"].map { Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: $0, title: $0, url: nil, depth: 1, kind: .tab, unloaded: false, lastSelectedAt: nil) }
     let before = WorkspaceSnapshot(archive: [], shownSpaceId: nil, selectedId: "split", spaces: [SpaceSnapshot(pinnedCount: 0, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "", favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .`default`, id: "work", title: "Work", icon: nil, look: nil,
@@ -302,6 +323,8 @@ func closingATerminalSplitFadesItsLastMember() throws {
     #expect(last.layer?.animation(forKey: "row.close.fade") != nil)
     #expect(!closeViews(sidebar).contains { $0.row.id == "split" || $0.row.id == "b" })
     sidebar.update(snapshot: next)
+    CATransaction.flush()
+    try await waitUntil { last.superview == nil }
     sidebar.layoutSubtreeIfNeeded()
     let fresh = closeSidebar(next)
     #expect(ReuseTree(sidebar, in: sidebar) == ReuseTree(fresh, in: fresh))

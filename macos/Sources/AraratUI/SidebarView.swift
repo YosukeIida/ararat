@@ -800,7 +800,7 @@ public final class SidebarView: NSView {
         traceSpaceWheelMotion("snapshot-update")
         if deferScrollSnapshot({ $0.update(snapshot: snapshot) }) { return }
         defer { requestedCloses.removeAll() }
-        if self.snapshot.shownSpaceId == snapshot.shownSpaceId,
+        if !requestedCloses.isEmpty, self.snapshot.shownSpaceId == snapshot.shownSpaceId,
            let current = snapshotSpace, snapshot.spaces.contains(where: { $0.id == current.id }) {
             let remaining = Set(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))
             let removed = (current.today + current.pinned + current.favorites).filter { !remaining.contains($0.id) }
@@ -811,12 +811,7 @@ public final class SidebarView: NSView {
                 return
             }
         }
-        finishRowMotion()
-        replaceSnapshot(snapshot)
-        library.update(archive: snapshot.archive)
-        tooltip.capture(in: library)
-        layoutSubtreeIfNeeded()
-        rowViews.values.forEach { $0.refreshHover() }
+        replaceSnapshot(snapshot, finishMotion: true)
     }
 
     private func applyPrivateMode() {
@@ -834,9 +829,10 @@ public final class SidebarView: NSView {
 
     public func updateSelection(id: String?) {
         guard selectedID != id else { return }
+        let previous = renderContext
         selectedID = id
         snapshot.selectedId = id
-        reload()
+        renderSidebar(previous: previous)
         revealSelection()
     }
 
@@ -865,53 +861,68 @@ public final class SidebarView: NSView {
     public func applySelection(snapshot: WorkspaceSnapshot) {
         traceSpaceWheelMotion("snapshot-selection")
         if deferScrollSnapshot({ $0.applySelection(snapshot: snapshot) }) { return }
-        let snapshot = keepingLookPreview(snapshot)
-        let selected = Self.sidebarSelection(snapshot)
-        let selectionChanged = selectedID != selected
-        let focusedPaneChanged = self.snapshot.selectedId != snapshot.selectedId
-        if self.snapshot.spaces == snapshot.spaces {
-            self.snapshot = snapshot
-            if selectionChanged || focusedPaneChanged { selectedID = selected; reload() }
-        }
-        else { replaceSnapshot(snapshot) }
-        library.update(archive: snapshot.archive)
-        tooltip.capture(in: library)
-        if selectionChanged { revealSelection() }
+        let selection = selectedID
+        replaceSnapshot(snapshot)
+        if selectedID != selection { revealSelection() }
     }
 
-    private func replaceSnapshot(_ snapshot: WorkspaceSnapshot) {
+    private static func sameOutline(_ old: [Row], _ new: [Row]) -> Bool {
+        old.elementsEqual(new) {
+            $0.id == $1.id && $0.parentId == $1.parentId && $0.depth == $1.depth &&
+                $0.kind == $1.kind && $0.collapsed == $1.collapsed
+        }
+    }
+
+    private func replaceSnapshot(_ snapshot: WorkspaceSnapshot, finishMotion: Bool = false) {
         traceSpaceWheelMotion("snapshot-replace")
-        if deferScrollSnapshot({ $0.replaceSnapshot(snapshot) }) { return }
+        if deferScrollSnapshot({ $0.replaceSnapshot(snapshot, finishMotion: finishMotion) }) { return }
         let snapshot = keepingLookPreview(snapshot)
-        layoutSubtreeIfNeeded()
-        listScroll.stopReveal()
-        let wasScrolled = listScroll.contentView.bounds.minY > 0.5
-        let anchors = rowViews.values.map { ($0.row.id, listScroll.documentView!.convert($0.bounds, from: $0)) }
-            .filter { $0.1.intersects(listScroll.contentView.bounds) && $0.0 != drag?.row.id }
-            .sorted { $0.1.minY < $1.1.minY }
-            .map { ($0.0, $0.1.minY - listScroll.contentView.bounds.minY) }
+        let previous = renderContext
         let oldSpace = self.snapshot.spaces.indices.contains(spaceIndex) ? self.snapshot.spaces[spaceIndex] : nil
-        let shownID = oldSpace?.id
-        if drag != nil, let oldSpace, snapshot.spaces.first(where: { $0.id == oldSpace.id })?.pinned != oldSpace.pinned {
+        let nextIndex = snapshot.spaces.firstIndex { $0.id == oldSpace?.id }
+            ?? (oldSpace == nil ? snapshot.spaces.firstIndex { $0.id == snapshot.shownSpaceId } : nil)
+            ?? min(spaceIndex, max(0, snapshot.spaces.count - 1))
+        let nextSpace = snapshot.spaces.indices.contains(nextIndex) ? snapshot.spaces[nextIndex] : nil
+        let pinsChanged = !Self.sameOutline(oldSpace?.pinned ?? [], nextSpace?.pinned ?? [])
+        let layoutChanged = oldSpace?.id != nextSpace?.id || pinsChanged ||
+            !Self.sameOutline(oldSpace?.today ?? [], nextSpace?.today ?? []) ||
+            !Self.sameOutline(oldSpace?.favorites ?? [], nextSpace?.favorites ?? [])
+        if layoutChanged && finishMotion { finishRowMotion() }
+        let anchors = layoutChanged ? visibleRowAnchors() : []
+        if drag != nil, pinsChanged {
             drag?.sprungFolders.removeAll()
             drag?.folderHover.aim(at: nil, now: dragClock())
         }
-        clearScrollPresentation()
-        spaceScroll = SpaceScrollState()
-        self.snapshot = snapshot
-        spaceListOrigins = spaceListOrigins.filter { id, _ in snapshot.spaces.contains { $0.id == id } }
-        spaceIndex = snapshot.spaces.firstIndex { $0.id == shownID }
-            ?? (shownID == nil ? snapshot.spaces.firstIndex { $0.id == snapshot.shownSpaceId } : nil)
-            ?? min(spaceIndex, max(0, snapshot.spaces.count - 1))
-        selectedID = Self.sidebarSelection(snapshot)
-        library.update(archive: snapshot.archive)
-        tooltip.capture(in: library)
-        reload()
-        layoutSubtreeIfNeeded()
-        if wasScrolled, let anchor = anchors.first(where: { rowViews[$0.0] != nil }), let row = rowViews[anchor.0] {
-            listScroll.move(to: listScroll.documentView!.convert(row.bounds, from: row).minY - anchor.1)
+        if layoutChanged {
+            listScroll.stopReveal()
+            clearScrollPresentation()
+            spaceScroll = SpaceScrollState()
         }
-        refreshPointer()
+        self.snapshot = snapshot
+        if !previous.snapshot.spaces.elementsEqual(snapshot.spaces, by: { $0.id == $1.id }) {
+            let surviving = Set(snapshot.spaces.map(\.id))
+            spaceListOrigins = spaceListOrigins.filter { surviving.contains($0.key) }
+        }
+        spaceIndex = nextIndex
+        if previous.snapshot != snapshot { selectedID = Self.sidebarSelection(snapshot) }
+        renderSidebar(previous: previous)
+        if layoutChanged {
+            layoutSubtreeIfNeeded()
+            if let document = listScroll.documentView,
+               let anchor = anchors.first(where: { rowViews[$0.0] != nil }), let row = rowViews[anchor.0] {
+                listScroll.move(to: document.convert(row.bounds, from: row).minY - anchor.1)
+            }
+            refreshPointer()
+        }
+    }
+
+    private func visibleRowAnchors() -> [(String, CGFloat)] {
+        let viewport = listScroll.contentView.bounds
+        guard viewport.minY > 0.5, let document = listScroll.documentView else { return [] }
+        return rowViews.values.map { ($0.row.id, document.convert($0.bounds, from: $0)) }
+            .filter { $0.1.intersects(viewport) && $0.0 != drag?.row.id }
+            .sorted { $0.1.minY < $1.1.minY }
+            .map { ($0.0, $0.1.minY - viewport.minY) }
     }
 
     public func applyClose(id: String, snapshot: WorkspaceSnapshot) {
@@ -1030,8 +1041,9 @@ public final class SidebarView: NSView {
     }
 
     public func showSpaceWithoutNotification(id: String) {
-        if showingScrollPages && scrollPageIndex == spaceIndex && snapshotSpace?.id == id {
-            traceSpaceWheelMotion("space-reply-matched")
+        if snapshotSpace?.id == id, !showingScrollPages || scrollPageIndex == spaceIndex {
+            if showingScrollPages { traceSpaceWheelMotion("space-reply-matched") }
+            else { revealSelection(animated: false) }
             return
         }
         showSpace(id: id, animatedReveal: false, notify: false)
@@ -1724,28 +1736,84 @@ public final class SidebarView: NSView {
         updateDockSelection()
     }
 
+    private struct RenderContext {
+        let snapshot: WorkspaceSnapshot
+        let space: SpaceSnapshot?
+        let selection: String?
+    }
+
+    private var renderContext: RenderContext {
+        RenderContext(snapshot: snapshot, space: snapshotSpace, selection: selectedID)
+    }
+
+    private var renderedURL: URLFieldContent?
+
     private func reload() {
+        traceSpaceWheelMotion("row-rebuild")
+        defer { traceSpaceWheelMotion("row-rebuild-end") }
+        renderSidebar()
+    }
+
+    private func renderSidebar(previous: RenderContext? = nil) {
+        let space = snapshotSpace
+        let oldSpace = previous?.space
+        let spaceChanged = previous == nil || oldSpace?.id != space?.id
         if let row = wheelDrawnRow {
             row.space = spaceIndex
             if row.superview == nil { spaceColumn.addSubview(row) }
         }
-        traceSpaceWheelMotion("row-rebuild")
-        defer { traceSpaceWheelMotion("row-rebuild-end") }
-        defer { refreshLook() }
-        let space = snapshotSpace
-        if let session = historySession, let profile = space?.profileName { showHistoryFailure(session.historyPurgeFailed(profile: profile)) }
-        if space?.id != hintSpaceID {
-            pendingPinHint = nil
-            rowViews.values.forEach { $0.hideRenameHint("space-change") }
-            hintSpaceID = space?.id
+        if spaceChanged {
+            if let session = historySession, let profile = space?.profileName {
+                showHistoryFailure(session.historyPurgeFailed(profile: profile))
+            }
+            if space?.id != hintSpaceID {
+                pendingPinHint = nil
+                rowViews.values.forEach { $0.hideRenameHint("space-change") }
+                hintSpaceID = space?.id
+            }
         }
-        lookSettings?.update(snapshot: snapshot)
-        spaceNameRow.space = space
-        let pinned = space?.pinned ?? []
+        if previous?.snapshot != snapshot { lookSettings?.update(snapshot: snapshot) }
+        let nameChanged = spaceChanged || oldSpace?.icon != space?.icon || oldSpace?.title != space?.title ||
+            oldSpace?.pinnedCollapsed != space?.pinnedCollapsed
+        if nameChanged {
+            spaceNameRow.space = space
+            tooltip.capture(in: spaceNameRow)
+        }
+        let pins = space?.pinned ?? []
         let today = space?.today ?? []
-        let selected = ((space?.favorites ?? []) + pinned + today).first { $0.id == selectedID }
-        let url = selected == nil ? nil : selectedURL
-        let content = URLFieldContent(url: url, hasTab: selected != nil)
+        let favorites = space?.favorites ?? []
+        let selected = (favorites + pins + today).contains { $0.id == selectedID }
+        updateURLField(URLFieldContent(url: selected ? selectedURL : nil, hasTab: selected), force: previous == nil)
+
+        let favoritesChanged = spaceChanged || oldSpace?.favorites != space?.favorites
+        if favoritesChanged { reloadFavorites() }
+        let listChanged = spaceChanged || oldSpace?.pinned != space?.pinned || oldSpace?.today != space?.today
+        let selectionChanged = previous?.selection != selectedID || previous?.snapshot.selectedId != snapshot.selectedId
+        if listChanged || selectionChanged {
+            reconcileRows(pinned: pins, today: today)
+        }
+        let dockChanged = previous.map {
+            !$0.snapshot.spaces.elementsEqual(snapshot.spaces) {
+                $0.id == $1.id && $0.title == $1.title && $0.icon == $1.icon && $0.look == $1.look
+            }
+        } ?? true
+        if spaceChanged || dockChanged {
+            updateSpaceDock()
+            tooltip.capture(in: dock)
+        }
+        if previous?.snapshot.archive != snapshot.archive {
+            library.update(archive: snapshot.archive)
+            tooltip.capture(in: library)
+        }
+        if previous == nil { tooltip.capture(in: self) }
+        if listChanged || selectionChanged { showPendingPinHint() }
+        if listChanged || favoritesChanged { onFaviconRowsChanged?() }
+        if spaceChanged || oldSpace?.look != space?.look { refreshLook() }
+    }
+
+    private func updateURLField(_ content: URLFieldContent, force: Bool) {
+        guard force || renderedURL != content else { return }
+        renderedURL = content
         copyLinkButton.isEnabled = content.canCopy
         copyLinkButton.isHidden = content.hidesButtons
         siteControlsButton.isHidden = content.hidesButtons
@@ -1759,15 +1827,15 @@ public final class SidebarView: NSView {
         hostClip.fadesStart = content.isHost
         hostClip.needsLayout = true
         hostClip.layoutSubtreeIfNeeded()
+    }
 
-        reloadFavorites()
-
+    private func reconcileRows(pinned: [Row], today: [Row]) {
         let allRows = pinned + today
-        let splitIDs = Set(allRows.filter { $0.kind == .split }.map(\.id))
+        let byID = Dictionary(allRows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let hidden = Set(allRows.filter { row in
             var parent = row.parentId
-            while let ancestor = allRows.first(where: { $0.id == parent }) {
-                if splitIDs.contains(ancestor.id) { return true }
+            while let ancestor = byID[parent] {
+                if ancestor.kind == .split { return true }
                 parent = ancestor.parentId
             }
             return false
@@ -1778,7 +1846,7 @@ public final class SidebarView: NSView {
             noTabsRows.removeValue(forKey: id)?.removeFromSuperview()
         }
         splitOwners.removeAll(keepingCapacity: true)
-        var ordered: [NSView] = pinned.filter { !hidden.contains($0.id) }.map { listView(for: $0) }
+        var ordered: [NSView] = pinned.filter { !hidden.contains($0.id) }.map { listView(for: $0, pinned: true) }
         if today.isEmpty {
             todayDivider.removeFromSuperview()
         } else {
@@ -1792,9 +1860,11 @@ public final class SidebarView: NSView {
         } else {
             newTabRow.removeFromSuperview()
         }
-        ordered.append(contentsOf: today.filter { !hidden.contains($0.id) }.map { listView(for: $0) })
+        ordered.append(contentsOf: today.filter { !hidden.contains($0.id) }.map { listView(for: $0, pinned: false) })
         arrange(ordered, in: rows)
+    }
 
+    private func updateSpaceDock() {
         if !privateWindow, dock.subviews.compactMap({ ($0 as? SpaceDockButton)?.spaceID }) != snapshot.spaces.map(\.id) {
             dockLookPopover.performClose(nil)
             dock.subviews.forEach { $0.removeFromSuperview() }
@@ -1819,9 +1889,6 @@ public final class SidebarView: NSView {
             updateDockSelection()
             dock.layoutSubtreeIfNeeded()
         }
-        tooltip.capture(in: self)
-        showPendingPinHint()
-        onFaviconRowsChanged?()
     }
 
     private func reloadFavorites() {
@@ -1865,21 +1932,20 @@ public final class SidebarView: NSView {
             let start = index * columns
             var tiles: [NSView] = models[start..<min(start + columns, models.count)].map { row in
                 guard let row else { return NSView() }
-                let iconText = row.url.flatMap(favoriteIconText)
                 let tile: FavoriteTile
                 if let existing = favoriteTiles[row.id] {
                     tile = existing
-                    tile.update(row: row, iconText: iconText)
+                    if tile.row != row { tile.update(row: row, iconText: row.url.flatMap(favoriteIconText)) }
                 } else {
-                    tile = FavoriteTile(row: row, iconText: iconText) { [weak self] row in self?.select(row) }
-                }
-                favoriteTiles[row.id] = tile
-                tile.accent = spaceAccent
-                applyFavoriteStatus(tile)
-                wireDrag(tile)
-                tile.menuProvider = { [weak self, weak tile] in
-                    guard let self, !self.isScrollPreview, let tile else { return nil }
-                    return self.favoriteMenu(row: tile.row)
+                    tile = FavoriteTile(row: row, iconText: row.url.flatMap(favoriteIconText)) { [weak self] row in self?.select(row) }
+                    favoriteTiles[row.id] = tile
+                    tile.accent = spaceAccent
+                    applyFavoriteStatus(tile)
+                    wireDrag(tile)
+                    tile.menuProvider = { [weak self, weak tile] in
+                        guard let self, !self.isScrollPreview, let tile else { return nil }
+                        return self.favoriteMenu(row: tile.row)
+                    }
                 }
                 tile.refusesFirstResponder = isScrollPreview
                 return tile
@@ -1894,55 +1960,60 @@ public final class SidebarView: NSView {
         tooltip.capture(in: favorites)
     }
 
-    private func rowView(for row: Row) -> SidebarRowView {
+    private func rowView(for row: Row, pinned: Bool) -> SidebarRowView {
         let view: SidebarRowView
-        if let existing = rowViews[row.id] {
+        let selected = row.id == selectedID
+        let existing = rowViews[row.id]
+        if let existing {
             view = existing
         } else {
-            view = SidebarRowView(row: row, selected: row.id == selectedID) { [weak self] row in self?.select(row) }
+            view = SidebarRowView(row: row, selected: selected) { [weak self] row in self?.select(row) }
             rowViews[row.id] = view
             rows.addArrangedSubview(view)
             view.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
-        }
-        view.hintClock = { [weak self] in self?.renameHintClock() ?? CACurrentMediaTime() }
-        view.hintReduceMotion = { [weak self] in self?.dragReduceMotion() ?? true }
-        wireDrag(view)
-        view.menuProvider = { [weak self, weak view] pane in
-            guard let self, let row = view?.row else { return nil }
-            switch row.kind {
-            case .folder: return self.folderMenu(row: row)
-            case .split: return self.splitMenu(row: row, pane: pane)
-            case .tab: return view?.pinned == true ? self.pinnedMenu(row: row) : self.todayMenu(row: row)
-            case .noTabs: return nil
+            view.accent = spaceAccent
+            view.hintClock = { [weak self] in self?.renameHintClock() ?? CACurrentMediaTime() }
+            view.hintReduceMotion = { [weak self] in self?.dragReduceMotion() ?? true }
+            wireDrag(view)
+            view.menuProvider = { [weak self, weak view] pane in
+                guard let self, let row = view?.row else { return nil }
+                switch row.kind {
+                case .folder: return self.folderMenu(row: row)
+                case .split: return self.splitMenu(row: row, pane: pane)
+                case .tab: return view?.pinned == true ? self.pinnedMenu(row: row) : self.todayMenu(row: row)
+                case .noTabs: return nil
+                }
             }
+            view.onRename = { [weak self] row in self?.beginRename(id: row.id) }
+            view.onRenameCommit = { [weak self] row, title, done in self?.commitRename(row: row, title: title, completion: done) }
+            view.onRenameEnd = { [weak self] in
+                guard let self, self.renamingID == row.id else { return }
+                self.renamingID = nil; self.notifyAutoArchiveReady()
+            }
+            view.onClose = { [weak self] id in
+                guard let self, let target = self.closeTarget(for: id) else { return }
+                // R1/D2: the button showed Close (a loaded pin’s −) or Archive; it passes that and the
+                // id it showed, so a stale click cannot be upgraded in the queue.
+                if target.action == .archive { self.onArchive?(target.id) } else { self.onClose?(target.id) }
+            }
+            view.onMute = { [weak self] id, muted in self?.onMute?(id, muted) }
         }
-        view.onRename = { [weak self] row in self?.beginRename(id: row.id) }
-        view.onRenameCommit = { [weak self] row, title, done in self?.commitRename(row: row, title: title, completion: done) }
-        view.onRenameEnd = { [weak self] in
-            guard let self, self.renamingID == row.id else { return }
-            self.renamingID = nil; self.notifyAutoArchiveReady()
-        }
-        view.pinned = snapshotSpace?.pinned.contains { $0.id == row.id } == true
-        view.privateWindow = privateWindow
-        view.accent = spaceAccent
-        view.onClose = { [weak self] id in
-            guard let self, let target = self.closeTarget(for: id) else { return }
-            // R1/D2: the button showed Close (a loaded pin’s −) or Archive; it passes that and the
-            // id it showed, so a stale click cannot be upgraded in the queue.
-            if target.action == .archive { self.onArchive?(target.id) } else { self.onClose?(target.id) }
-        }
-        view.onMute = { [weak self] id, muted in self?.onMute?(id, muted) }
+        let placementChanged = view.pinned != pinned || view.privateWindow != privateWindow
+        if view.pinned != pinned { view.pinned = pinned }
+        if view.privateWindow != privateWindow { view.privateWindow = privateWindow }
         view.closeCaps = closeCaps
-        view.update(row: row, selected: row.id == selectedID)
-        if row.kind == .split {
-            let panes = paneRows(of: row.id)
-            view.updateSegments(panes, active: snapshot.selectedId, crashed: rowPresentation.crashedItems)
-            for pane in panes {
-                splitOwners[pane.id] = row.id
-                applyPanePresentation(view, id: pane.id)
-            }
-        } else { view.updateSegments([], active: nil) }
+        let changed = placementChanged || view.row != row || view.selected != selected
+        if changed {
+            view.update(row: row, selected: selected)
+        }
+        let panes = row.kind == .split ? paneRows(of: row.id) : []
+        let rebuilt = view.updateSegments(panes, active: snapshot.selectedId, crashed: rowPresentation.crashedItems)
+        for pane in panes {
+            splitOwners[pane.id] = row.id
+            if rebuilt { applyPanePresentation(view, id: pane.id) }
+        }
         applyPresentation(view)
+        if existing == nil || changed || rebuilt { tooltip.capture(in: view) }
         view.acceptsKeyboardFocus = !isScrollPreview
         return view
     }
@@ -2002,8 +2073,8 @@ public final class SidebarView: NSView {
 
     // The row the core says is a folder's empty line is drawn by its own view, so the rows
     // stack needs that view instead of a SidebarRowView.
-    private func listView(for row: Row) -> NSView {
-        row.kind == .noTabs ? noTabsView(for: row) : rowView(for: row)
+    private func listView(for row: Row, pinned: Bool) -> NSView {
+        row.kind == .noTabs ? noTabsView(for: row) : rowView(for: row, pinned: pinned)
     }
 
     private func removeRow(id: String) {
@@ -2041,6 +2112,7 @@ public final class SidebarView: NSView {
     }
 
     private func arrange(_ views: [NSView], in stack: NSStackView) {
+        guard stack.arrangedSubviews != views else { return }
         for (index, view) in views.enumerated() {
             if index >= stack.arrangedSubviews.count || stack.arrangedSubviews[index] !== view {
                 stack.insertArrangedSubview(view, at: index)
@@ -2054,9 +2126,10 @@ public final class SidebarView: NSView {
             performEdit(.collapse(id: row.id, collapsed: !row.collapsed))
             return
         }
+        let previous = renderContext
         snapshot.selectedId = row.id
         selectedID = Self.sidebarSelection(snapshot)
-        reload()
+        renderSidebar(previous: previous)
         revealSelection()
         onSelect?(row)
     }

@@ -321,7 +321,7 @@ final class SidebarRowView: NSView {
     private var trackingPress = false
     private(set) var pressed = false { didSet { updateFill() } }
     private let titleMask = CAGradientLayer()
-    private var selected: Bool
+    private(set) var selected: Bool
     private let fill = NSView()
     let fillShadow = SelectedRowShadow(name: "row-selected-shadow")
     private let icon = SidebarIconView()
@@ -465,14 +465,20 @@ final class SidebarRowView: NSView {
         }
         fillLeading.constant = CGFloat(row.depth) * 16
         iconLeading.constant = SidebarMetrics.rowIconInset + CGFloat(row.depth) * 16
-        setAccessibilityLabel(title.stringValue)
+        if segmentRows.isEmpty { setAccessibilityLabel(title.stringValue) }
         updateStatus()
         updateFill()
         updateCloseButton()
         noteFocusRingMaskChanged()
     }
 
-    func updateSegments(_ members: [Row], active: String?, crashed: Set<String> = []) {
+    private var activeSegmentID: String?
+
+    @discardableResult
+    func updateSegments(_ members: [Row], active: String?, crashed: Set<String> = []) -> Bool {
+        let active = members.contains { $0.id == active } ? active : nil
+        guard members != segmentRows || active != activeSegmentID else { return false }
+        activeSegmentID = active
         segmentRows = members
         segments.arrangedSubviews.forEach { $0.removeFromSuperview() }
         // A split draws its panes' segments and nothing of its own: no row-level glyph, fill or
@@ -496,6 +502,7 @@ final class SidebarRowView: NSView {
         updateStatus()
         updateFill()
         setAccessibilityLabel(drawing ? "Split: " + members.map(Self.paneName).joined(separator: ", ") : title.stringValue)
+        return true
     }
 
     var paneIDs: [String] { segmentRows.map(\.id) }
