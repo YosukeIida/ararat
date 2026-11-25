@@ -102,6 +102,7 @@ enum SidebarPerformanceCheck {
             sidebar.workCountsForCheck = .init()
             var reloads: [Int] = []
             var sweeps: [Int] = []
+            var rowOrderChanges: [Int] = []
             for pass in 0..<2 {
                 for (index, item) in expected.enumerated() {
                     guard let position = runtime.snapshot.spaces.firstIndex(where: { $0.id == "space-\(index)" }),
@@ -112,6 +113,7 @@ enum SidebarPerformanceCheck {
                     guard let after = sidebar.workCountsForCheck else { throw Timeout(description: "missing work counters") }
                     reloads.append(after.reloads - before.reloads)
                     sweeps.append(after.statusSweeps - before.statusSweeps)
+                    rowOrderChanges.append(after.rowOrderChanges - before.rowOrderChanges)
                     let ids = pass == 0 ? Set(expected.prefix(index + 1)) : Set(expected)
                     let previous = conditions["only_committed_tabs_open"] ?? true
                     conditions["only_committed_tabs_open"] = previous && liveIDs() == ids && tabs().count == ids.count
@@ -119,8 +121,10 @@ enum SidebarPerformanceCheck {
             }
             values["reloads_per_switch"] = reloads
             values["status_sweeps_per_switch"] = sweeps
+            values["row_order_changes_per_switch"] = rowOrderChanges
             values["after_revisit_ids"] = liveIDs().sorted()
             conditions["at_most_one_composition_per_switch"] = reloads.count == 48 && reloads.allSatisfy { $0 <= 1 }
+            conditions["at_most_one_row_order_change_per_switch"] = rowOrderChanges.count == 48 && rowOrderChanges.allSatisfy { $0 <= 1 }
             conditions["no_full_status_sweeps"] = sweeps.count == 48 && sweeps.allSatisfy { $0 == 0 }
 
             let before = sidebar.workCountsForCheck
