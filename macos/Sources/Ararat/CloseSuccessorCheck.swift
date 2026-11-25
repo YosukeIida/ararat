@@ -61,8 +61,11 @@ extension Runtime {
         case 2:
             guard snapshot.selectedId == "succ-b" else { return }
             mark("successor_selected")
-            mark("successor_loaded", liveTab("succ-b") != nil && row("succ-b")?.unloaded == false
-                 && tabs.contains { $0.itemId == "succ-b" && !$0.isLoading })
+            // The selection reaches this window before the load the close started does: the
+            // request, the page and its load end follow on later turns, so wait for them
+            // instead of judging the row on the tick that sees it selected.
+            guard liveTab("succ-b") != nil, tabs.contains(where: { $0.itemId == "succ-b" && !$0.isLoading }) else { return }
+            mark("successor_loaded", row("succ-b")?.unloaded == false)
             mark("no_other_row_loaded", liveTab("succ-a") == nil && liveTab("succ-c") == nil && tabs.count == 1)
             mark("closed_row_archived", snapshot.archive.contains { $0.id == "succ-a" })
             finish()
