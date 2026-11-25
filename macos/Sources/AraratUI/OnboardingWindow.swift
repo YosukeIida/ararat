@@ -209,7 +209,7 @@ final class OnboardingContentView: NSView {
 
         switch model.stage {
         case .welcome:
-            glyph(y: &y, width: width)
+            appIcon(y: &y, width: width)
             title("Welcome to Ararat", width: width, y: &y, centered: true)
             body("Vertical tabs, spaces and a command bar, on Chromium.", width: width, y: &y, centered: true)
         case .source:
@@ -236,7 +236,7 @@ final class OnboardingContentView: NSView {
             let alsoCard = card(rows: alsoRows(), x: OnboardingMetrics.margin + column + OnboardingMetrics.columnGap, y: y, width: column)
             addSubview(alsoCard)
         case .defaultBrowser:
-            glyph(y: &y, width: width)
+            appIcon(y: &y, width: width)
             title("Make Ararat your default browser?", width: width, y: &y, centered: true)
             body("Links from other apps open in the space that Air Traffic Control picks.", width: width, y: &y, centered: true)
         case .progress:
@@ -291,9 +291,10 @@ final class OnboardingContentView: NSView {
         y += OnboardingMetrics.titleHeight
     }
 
-    private func glyph(y: inout CGFloat, width: CGFloat) {
+    private func appIcon(y: inout CGFloat, width: CGFloat) {
         let view = NSImageView()
-        view.image = OnboardingGlyph.mountain(size: 64, color: OnboardingColor.foreground)
+        view.image = NSApp.applicationIconImage
+        view.imageScaling = .scaleProportionallyUpOrDown
         view.frame = NSRect(x: (width - 64) / 2, y: y, width: 64, height: 64)
         addSubview(view)
         y += 64 + 8
@@ -635,25 +636,6 @@ final class OnboardingButton: NSButton {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-    }
-}
-
-enum OnboardingGlyph {
-    static func mountain(size: CGFloat, color: NSColor) -> NSImage {
-        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
-            let path = NSBezierPath()
-            path.lineWidth = 2.4
-            path.lineCapStyle = .round
-            path.lineJoinStyle = .round
-            func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: rect.width * x / 64, y: rect.height * y / 64) }
-            path.move(to: point(6, 50)); path.line(to: point(22, 22)); path.line(to: point(30, 34))
-            path.line(to: point(36, 25)); path.line(to: point(58, 50)); path.close()
-            path.move(to: point(17.5, 30)); path.line(to: point(22, 34)); path.line(to: point(26, 31))
-            color.setStroke()
-            path.stroke()
-            return true
-        }
-        return image
     }
 }
 
