@@ -4,8 +4,8 @@ import Testing
 @testable import AraratUI
 
 /// Arc's counts on the owner's trackball (2026-11-16), recorded with `scrollrec` on the host and
-/// replayed into Arc with `scrollplay` (docs/research/arc-ardia-observed.md section 5). The
-/// fixtures hold the recorded deltas, phases and timing only.
+/// replayed into Arc with `scrollplay`; the recordings and the measurements are under
+/// `docs/research/`. The fixtures hold the recorded deltas, phases and timing only.
 private func recording(_ name: String) throws -> [SpaceScrollRecordedEvent] {
     let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         .appendingPathComponent("Fixtures/\(name).txt")

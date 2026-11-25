@@ -1,4 +1,4 @@
-//! The fixture is synthetic, built from Cra's notes on Arc's format. The importer has also read
+//! The fixture is synthetic, built from the notes on Arc's format. The importer has also read
 //! the owner's real `StorableSidebar.json` (Arc 1.171) without error.
 
 use ararat_core::import::arc_sidebar;

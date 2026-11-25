@@ -3,12 +3,12 @@ import AraratEngineAPI
 import AraratKit
 import AraratUI
 
-/// p4checks (design, p4yab): the folder-upload row. A page's `<input webkitdirectory>` asks the
+/// p4checks (design): the folder-upload row. A page's `<input webkitdirectory>` asks the
 /// platform for a directory. The question Chrome shows after the panel returns ("Upload N
 /// files?") is the app's later concern; this check covers the panel itself — that the click on
 /// the page's own label reaches Chromium's file chooser, that the panel it opens belongs to our
-/// window rather than to the hidden Browser (Yab's defect), and that cancelling it leaves the
-/// page where it was. The click is a real mouse event on the page view, the page's own label.
+/// window rather than to the hidden Browser, and that cancelling it leaves the page where it
+/// was. The click is a real mouse event on the page view, the page's own label.
 @MainActor
 final class FolderUploadCheckState {
     static let names = ["seed", "page_loaded", "click_sent", "chooser_opened", "chooser_ours",

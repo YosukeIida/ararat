@@ -30,8 +30,7 @@ enum WindowDoubleClickAction: Equatable {
 /// those areas pass their `mouseDown` to `Held`, which stores the press; the first `mouseDragged`
 /// past `dragThreshold` hands that stored press to the window server, and a `mouseUp` that stayed
 /// within the threshold on a second click runs the title-bar action. Controls, rows, dock cells
-/// and the page keep their own clicks. Full screen never moves (design, 2026-11-16, from Yab's
-/// stored-press model; reimplemented, no code copied).
+/// and the page keep their own clicks. Full screen never moves (design, 2026-11-16).
 @MainActor
 enum WindowDrag {
     /// Only a window that can move: full screen's window has no title bar to drag.

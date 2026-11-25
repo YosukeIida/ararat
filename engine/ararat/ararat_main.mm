@@ -378,7 +378,7 @@ void CheckGuards(int argc, const char** argv) {
         valid_screen = true;
         g_check_slice = true;
       }
-      // p4checks (design, p4yab): the folder-upload row — the page's directory picker.
+      // p4checks (design): the folder-upload row — the page's directory picker.
       if (std::string_view(arg + 16) == "folder-upload") {
         valid_screen = true;
         g_check_slice = true;

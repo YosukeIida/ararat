@@ -10,7 +10,7 @@ pub enum MatchStyle {
 
 impl Default for MatchStyle {
     fn default() -> Self {
-        // Contains is Arc's style on a fresh rule (Cra LinkRouting.swift: match defaults to .contains).
+        // Contains is Arc's style on a fresh rule (match defaults to .contains).
         MatchStyle::Contains
     }
 }
@@ -28,8 +28,8 @@ pub enum SpaceTarget {
 }
 
 // The default is the Little window with the profile's own tabs, the value Arc's
-// StorableLinkRouting.json carried for the owner's default destination (and Cra imports
-// as .littleWindow); the Settings pane can point it at a space instead.
+// StorableLinkRouting.json carried for the owner's default destination (imported as
+// .littleWindow); the Settings pane can point it at a space instead.
 impl Default for Destination {
     fn default() -> Self {
         Destination::LittleWindow(Profile::Default)
@@ -80,7 +80,7 @@ pub struct Routing {
 impl Default for Routing {
     fn default() -> Self {
         // Where links from other apps go on a fresh install: the Little window (Arc's default
-        // file and Cra's import default are the Little window; the Settings pane can point
+        // file and the importer's default are the Little window; the Settings pane can point
         // it at a space).
         Routing { rules: Vec::new(), default: Destination::default() }
     }
@@ -151,7 +151,7 @@ impl Routing {
     // its destination, so callers that need the rule id never match a second time.
     pub fn rule_for(&self, url: &str) -> Option<&Rule> {
         let url = normalize(url);
-        // shortcut: a rule matches when any condition matches; Arc's meaning for several conditions is unobserved, recheck once Yab/Arc show a multi-condition rule.
+        // shortcut: a rule matches when any condition matches; Arc's meaning for several conditions is unobserved, recheck once a multi-condition rule is observed.
         self.rules.iter().find(|rule| rule.conditions.iter().any(|c| c.matches(&url)))
     }
 }
@@ -164,7 +164,7 @@ impl UrlCondition {
     fn matches(&self, url: &str) -> bool {
         let text = normalize(&self.text);
         // Why not match an empty condition: `contains("")` would match every URL; an empty
-        // route matches nothing (Cra LinkRouting.swift, verified on Arc 1.170).
+        // route matches nothing (verified on Arc 1.170).
         if text.is_empty() { return false; }
         match self.style {
             MatchStyle::Contains => url.contains(&text),

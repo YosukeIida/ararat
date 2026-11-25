@@ -258,7 +258,7 @@ final class PromptFixtureServer {
     </script>
     """
 
-  // p4checks (design, p4yab): the folder-upload row. The label fills the page view's top-left
+  // p4checks (design): the folder-upload row. The label fills the page view's top-left
   // so a real click at (70, 70) lands on it and gives the picker its user activation.
   private static let folderUploadPage = """
     <!doctype html><title>Folder upload fixture</title>
