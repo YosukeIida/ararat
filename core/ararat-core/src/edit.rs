@@ -1097,13 +1097,6 @@ impl Workspace {
         })
     }
 
-    pub fn is_open_visible(&self, id: &str) -> bool {
-        self.items.get(id).is_some_and(|item| item.lifecycle == Lifecycle::Open) && self.is_selectable(id) && match self.items[id].kind {
-            ItemKind::Split { .. } => self.outline(id).iter().any(|(_, item)| item.lifecycle == Lifecycle::Open && matches!(item.kind, ItemKind::Tab { .. })),
-            _ => true,
-        }
-    }
-
     pub fn select_item(&mut self, window: &str, id: &str) -> Result<Vec<Op>, EditError> {
         self.select_item_at(window, id, self.lifecycle_time())
     }
@@ -1296,7 +1289,12 @@ impl Workspace {
             while let Some(ancestor) = parent.and_then(|id| self.items.get(id)) {
                 if matches!(ancestor.kind, ItemKind::Split { .. }) && !self.outline_entries(&ancestor.id).iter().any(|(_, i, _)| {
                     matches!(i.kind, ItemKind::Tab { .. }) && (i.lifecycle == Lifecycle::Open || (today && i.lifecycle == Lifecycle::Unloaded)) && !changing.contains(&i.id)
-                }) { changing.insert(ancestor.id.clone()); }
+                }) {
+                    changing.insert(ancestor.id.clone());
+                    // The split goes as one row: every member inside it is this close's too,
+                    // so neither the successor nor the history comes back to one of them.
+                    changing.extend(self.outline_entries(&ancestor.id).into_iter().map(|(_, member, _)| member.id.clone()));
+                }
                 parent = ancestor.membership.parent.as_ref();
             }
         }
@@ -1337,7 +1335,10 @@ impl Workspace {
                         .find_map(|(_, item, _)| self.successor_group(&item.id, &changing)));
                 state.select(successor);
             }
-            if today { state.history.retain(|id| !changing.contains(id)); }
+            // A row this close unloads leaves the selection history too: an unloaded row is a
+            // successor, so keeping the pin that was just unloaded there would reload it on
+            // the next close instead of moving on (consecutive pinned closes).
+            state.history.retain(|id| !changing.contains(id));
             if state != before {
                 state.changed_at = changed_at;
                 ops.push(Op::Put(Record::Window(state)));
@@ -1393,8 +1394,12 @@ impl Workspace {
         self.space_of(id).is_some_and(|owner| owner.id == space)
     }
 
+    // A successor is any tab row the sidebar draws, loaded or not: an unloaded row is the
+    // successor Arc picks too, and the caller loads it the way a click does. What stays out
+    // is a row the sidebar does not draw (a collapsed folder's tabs) and the rows of the
+    // close itself; is_selectable is that same drawing test.
     fn successor_group(&self, id: &str, excluded: &HashSet<Id>) -> Option<Id> {
-        if excluded.contains(id) || !self.is_open_visible(id) { return None; }
+        if excluded.contains(id) || !self.is_selectable(id) { return None; }
         matches!(self.items[id].kind, ItemKind::Tab { .. }).then(|| id.into())
     }
 }

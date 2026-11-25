@@ -1068,24 +1068,26 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let archive = isPrivate ? false : (archive ?? row.flatMap { row in space.map { rowCloseArchives(row, in: $0) } } ?? false)
             if row?.kind == .split {
                 let targets = try archive ? store.liveArchiveSplit(item: item) : store.liveCloseSplit(item: item)
-                let snapshot = store.snapshot(windowId: self.windowID)
+                let after = store.snapshot(windowId: self.windowID)
                 DispatchQueue.main.async {
                     if animate { self.closingRows.insert(item) }
                     else { self.closingRows.remove(item) }
                     self.session.closeLiveTargets(targets, report: self.report)
-                    self.deliverIfCurrent(snapshot)
+                    self.deliverIfCurrent(after)
+                    self.openSelectedRowIfUnloaded(after)
                     self.onWorkspaceChange?()
                 }
                 return
             }
             guard let liveID = store.liveTab(item: item) else {
-                let snapshot = try archive
+                let after = try archive
                     ? store.archiveItem(windowId: self.windowID, id: item)
                     : store.closeItem(windowId: self.windowID, id: item)
                 DispatchQueue.main.async {
                     if animate { self.closingRows.insert(item) }
                     else { self.closingRows.remove(item) }
-                    self.deliverIfCurrent(snapshot)
+                    self.deliverIfCurrent(after)
+                    self.openSelectedRowIfUnloaded(after)
                 }
                 return
             }
@@ -1096,6 +1098,23 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                 self.session.tab(liveID)?.close(withCommandId: command.id)
             }
         } catch { self.report(error) }
+    }
+
+    // Arc's unloaded rows are close successors too: the core selects one and marks it open,
+    // and this window loads it the way a click does, so the page follows the row instead of
+    // the empty card. A row that already has a WebContents is left alone, and so is a window
+    // still restoring its selection (the restore loads its own row).
+    private func openSelectedRowIfUnloaded(_ snapshot: WorkspaceSnapshot) {
+        guard !restoringSelection, littleWindowHandoffs == 0, let id = snapshot.selectedId,
+              // A click already on its way keeps the row it names (the close successor waits,
+              // as it does for a loaded row).
+              (selectionRequest?.item ?? id) == id,
+              let space = snapshot.spaces.first(where: { $0.id == snapshot.shownSpaceId }),
+              let row = (space.today + space.pinned + space.favorites).first(where: { $0.id == id }),
+              let url = row.url,
+              queue.sync(execute: { store?.liveTab(item: id) == nil }) else { return }
+        tracePrivate("close-successor open item=\(id)")
+        select(id: id, url: url)
     }
 
     public func pageCard(forWindowHost host: any ARWindowHostAPI) -> NSView { card }
@@ -1359,6 +1378,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     }
                     self.maybeFinishCrashRecovery()
                     self.deliverIfCurrent(snapshot)
+                    if outcome.applied { self.openSelectedRowIfUnloaded(snapshot) }
                     if let own = transaction.strips.first(where: { $0.window == self.windowID }),
                        let active = own.active, let tab = self.tab(active), let item = tab.itemId {
                         self.session.captureSnapshot(tab, item: item)

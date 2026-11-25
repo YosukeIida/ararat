@@ -46,7 +46,7 @@ fn history_is_per_window_unique_and_bounded_to_fifty() {
 }
 
 #[test]
-fn successor_skips_collapsed_unloaded_and_closed_history_entries() {
+fn successor_skips_collapsed_and_closed_history_entries_and_loads_an_unloaded_one() {
     let mut ws = workspace();
     for id in ["y0", "y1", "y2", "y3", "y4"] { ws.select_item("one", id).unwrap(); }
     let mut folder = ws.items["folder-docs"].clone();
@@ -56,7 +56,11 @@ fn successor_skips_collapsed_unloaded_and_closed_history_entries() {
     ws.items.get_mut("y2").unwrap().lifecycle = Lifecycle::Unloaded;
     ws.items.get_mut("y3").unwrap().lifecycle = Lifecycle::Closed;
     ws.close_item("y4").unwrap();
-    assert_eq!(ws.selected("one"), Some("y0"));
+    // The closed folder's tab is out of reach; the unloaded row is a successor and the close
+    // loads it, as Arc selects the neighbouring row it kept unloaded.
+    assert_eq!(ws.selected("one"), Some("y2"));
+    assert_eq!(ws.items["y2"].lifecycle, Lifecycle::Open);
+    assert_eq!(ws.items["y1"].lifecycle, Lifecycle::Open);
 }
 
 #[test]

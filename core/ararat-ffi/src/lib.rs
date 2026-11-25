@@ -1934,7 +1934,7 @@ fn split_pane(ws: &Workspace, id: &str, factor: f64) -> Option<SplitPane> {
 // the candidates are the space's rows as if nothing were folded — the pinned section's
 // record and the folders' — and the holder rule keeps the chosen pin's path visible in the
 // snapshot the caller gets back. Selection is the user's explicit pick; the close successor
-// is an automatic one and still skips a closed folder's tabs (is_open_visible reads the
+// is an automatic one and still skips a closed folder's tabs (is_selectable reads the
 // folder state).
 fn selection_view(workspace: &Workspace, window_id: &str) -> WorkspaceSnapshot {
     let mut view = workspace.clone();

@@ -935,6 +935,34 @@ fn a_swallowed_activation_does_not_silence_the_reopened_row() {
 }
 
 #[test]
+fn an_app_close_of_the_only_loaded_tab_loads_the_unloaded_successor() {
+    let mut ws = workspace();
+    let mut live = Live::new();
+    let (_, command) = live.open(&mut ws, "a", "u").unwrap();
+    live.command_sent(&command);
+    live.apply(&mut ws, snapshot_tx(vec![strip(&live, &["a"], Some("a"))]));
+    live.apply(&mut ws, Transaction { off_the_record: false, epoch: 1, rev: 1, cause: Cause::Chrome, strips: vec![strip(&live, &["a"], Some("a"))] });
+    assert_eq!(ws.selected("one"), Some("a"));
+    // The rest of the space is what an Arc import leaves: rows that are not loaded.
+    for item in ["b", "c"] { ws.items.get_mut(item).unwrap().lifecycle = Lifecycle::Unloaded; }
+    let (_, close) = live.close(&mut ws, "a").unwrap();
+    assert_eq!(ws.selected("one"), Some("b"));
+    assert_eq!(ws.items["b"].lifecycle, Lifecycle::Open);
+    assert!(live.live_tab("b").is_none());
+    // The engine answers with no tab left in the window: the rule's selection stands, and the
+    // coordinator asks for no activation of a row it has no live tab for — the app loads b.
+    let (_, outcome) = live.apply(&mut ws, Transaction { off_the_record: false,
+        epoch: 1, rev: 2, cause: Cause::Command(close.id),
+        strips: vec![strip(&live, &[], None)],
+    });
+    assert!(outcome.applied);
+    assert!(outcome.commands.is_empty());
+    assert_eq!(ws.selected("one"), Some("b"));
+    assert_eq!(ws.items["b"].lifecycle, Lifecycle::Open);
+    assert_eq!(ws.items["a"].lifecycle, Lifecycle::Closed);
+}
+
+#[test]
 fn chrome_close_of_the_active_tab_activates_the_successor_the_core_chooses() {
     let mut ws = workspace();
     let mut live = Live::new();
