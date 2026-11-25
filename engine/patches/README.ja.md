@@ -69,7 +69,7 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 
 ## 独自パッチに関する注記
 
-`ararat/native-editor-ime.patch` は、英数・かなキーを key window へ直接配送する Chromium の処理を `RenderWidgetHostViewCocoa` に限定し、それ以外の first responder では、`TISCreateInputSourceList` で型を `kTISTypeKeyboardInputMode`、`includeAllInstalled = false` として絞り込んだ一覧に有効な入力モードが一つ以上あり（ABC 選択中も含む）、first responder が view の場合だけ、keyDown をその input context に渡し、処理されたかどうかにかかわらず戻る。それ以外では input context を呼ばずにキーを破棄する。どちらの場合も keyDown や window には転送しない。IME への配送を維持し、U.S. 入力ソースだけの input context が制御文字を挿入することを防ぐ。
+`ararat/native-editor-ime.patch` は、first responder が `RenderWidgetHostViewCocoa` のとき、Chromium が英数・かなキーを key window へ直接配送する処理を維持する。それ以外では、`TISCreateInputSourceList` が有効な `kTISTypeKeyboardInputMode` を返した場合（`includeAllInstalled = false`）、AppKit の `[super sendEvent:event]` で配送する。入力モードが有効なら、ABC を選択している間もこの経路を使う。一覧が空または NULL の場合は、U.S. 入力ソースだけの input context が U+0010 を挿入することがあるため、keyDown を破棄する。実機のJISキーボードでの入力ソース切り替えは未確認。
 
 `ararat/sad-tab-viewless.patch` は、host ウィンドウに `BrowserView` がない場合、標準の sad-tab view を設置せずに戻る。Ardia（`mantrakp04/ardia`、GPL-3.0）の `engine/ardiacore/apply.sh` にも同じガードがある。このパッチは Chromium のソースに対して独自に記述した。
 

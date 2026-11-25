@@ -40,11 +40,10 @@ namespace base { struct FeatureList {
 @end
 @implementation Event @end
 @interface InputContext : NSObject
-@property BOOL handled;
 - (BOOL)handleEvent:(Event*)event;
 @end
 @implementation InputContext
-- (BOOL)handleEvent:(Event*)event { ++contextCalls; return self.handled; }
+- (BOOL)handleEvent:(Event*)event { ++contextCalls; return NO; }
 @end
 @interface NSResponder : NSObject @end
 @implementation NSResponder @end
@@ -103,16 +102,13 @@ int main() {
       for (InputSources sources : {LayoutOnly, EnabledSourceWithoutType,
                                    LayoutWithEnabledIME, IMESelected}) {
         inputSources = sources;
-        for (BOOL handled : {NO, YES}) {
-          native.inputContext = [InputContext new];
-          native.inputContext.handled = handled;
-          int contexts = sources == LayoutWithEnabledIME || sources == IMESelected ? 1 : 0;
-          check(native, NSEventTypeKeyDown, code, 0, contexts, 0, 0);
-        }
+        int supers = sources == LayoutWithEnabledIME || sources == IMESelected ? 1 : 0;
+        native.inputContext = [InputContext new];
+        check(native, NSEventTypeKeyDown, code, 0, 0, 0, supers);
         native.inputContext = nil;
-        check(native, NSEventTypeKeyDown, code, 0, 0, 0, 0);
-        check(nil, NSEventTypeKeyDown, code, 0, 0, 0, 0);
-        check([NSResponder new], NSEventTypeKeyDown, code, 0, 0, 0, 0);
+        check(native, NSEventTypeKeyDown, code, 0, 0, 0, supers);
+        check(nil, NSEventTypeKeyDown, code, 0, 0, 0, supers);
+        check([NSResponder new], NSEventTypeKeyDown, code, 0, 0, 0, supers);
         check([RenderWidgetHostViewCocoa new], NSEventTypeKeyDown, code, 0, 0, 1, 0);
         check([PageSubclass new], NSEventTypeKeyDown, code, 0, 0, 1, 0);
         check(native, NSEventTypeKeyUp, code, 0, 0, 0, 1);
@@ -127,7 +123,7 @@ int main() {
     check(native, NSEventTypeKeyUp, 0, NSEventModifierFlagCommand, 0, 1, 0);
     forwardCmd = false;
     check(native, NSEventTypeKeyUp, 0, NSEventModifierFlagCommand, 0, 0, 1);
-    std::puts("extracted native editor IME dispatch checks passed (70 cases; no AppKit dispatch)");
+    std::puts("extracted native editor IME dispatch checks passed (62 cases; simulated dispatch)");
   }
 }
 '''
