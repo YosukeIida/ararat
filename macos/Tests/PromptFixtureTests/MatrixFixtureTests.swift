@@ -1049,8 +1049,8 @@ func closeSuccessorDoesNotDispatchOverAnInFlightClick() async throws {
     #expect(resolved == [command])
 }
 
-@Test @MainActor
-func aCloseSuccessorThatTheImportLeftUnloadedIsOpenedTheWayAClickOpensIt() async throws {
+@Test(arguments: [false, true], [false, true]) @MainActor
+func aCloseLoadsOnlyAnUnloadedSuccessor(appClose: Bool, unloaded: Bool) async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -1078,19 +1078,42 @@ func aCloseSuccessorThatTheImportLeftUnloadedIsOpenedTheWayAClickOpensIt() async
     engine.onTransaction = { if $1 { lastApplied = $0.rev } }
     engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "successor", epoch: 1, rev: 0, command: nil))
     try await matrixWait { lastApplied == 0 }
+    try session.queue.sync {
+        let store = try #require(session.store)
+        if !unloaded {
+            _ = try store.selectItem(windowId: "successor", id: neighbour)
+            _ = try store.selectItem(windowId: "successor", id: open)
+        }
+        let row = store.snapshot(windowId: "successor").spaces.flatMap(\.today).first { $0.id == neighbour }
+        #expect(row?.unloaded == unloaded)
+        #expect(store.liveTab(item: neighbour) == nil)
+    }
 
+    var command: String?
+    if appClose {
+        engine.close(id: open)
+        try await matrixWait { fake.closed.count == 1 }
+        command = try #require(fake.closed.first)
+        #expect(fake.opened.isEmpty)
+    }
     fake.entries.removeAll { $0.itemId == open }
     fake.active = nil
-    var close = matrixTransaction(fake, window: "successor", epoch: 1, rev: 1, command: nil)
-    close["cause"] = "Chrome"
+    var close = matrixTransaction(fake, window: "successor", epoch: 1, rev: 1, command: command)
+    if !appClose { close["cause"] = "Chrome" }
     engine.windowHost(host, didReceiveTransaction: close)
-    try await matrixWait { lastApplied == 1 && !fake.opened.isEmpty }
+    try await matrixWait { lastApplied == 1 }
 
-    let opened = try #require(session.queue.sync { session.store?.liveTab(item: neighbour) })
     #expect(session.queue.sync { session.store?.selectedItem(windowId: "successor") } == neighbour)
-    #expect(fake.opened == [opened])
-    #expect(fake.entries.map(\.itemId) == [neighbour])
-    #expect(fake.entries.first?.liveId == opened)
+    if unloaded {
+        try await matrixWait { !fake.opened.isEmpty }
+        let opened = try #require(session.queue.sync { session.store?.liveTab(item: neighbour) })
+        #expect(fake.opened == [opened])
+        #expect(fake.entries.map(\.itemId) == [neighbour])
+        #expect(fake.entries.first?.liveId == opened)
+    } else {
+        #expect(session.queue.sync { session.store?.liveTab(item: neighbour) } == nil)
+        #expect(fake.opened.isEmpty)
+    }
 }
 
 @Test @MainActor
