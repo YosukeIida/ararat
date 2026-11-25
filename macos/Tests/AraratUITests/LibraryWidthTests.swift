@@ -108,6 +108,33 @@ func libraryOpenIgnoresWidthDragsAndAccessibilityChanges() throws {
     #expect(handle.sidebarWidth == SidebarMetrics.defaultWidth + 200)
 }
 
+@Test @MainActor
+func libraryOpenCollapsesOncePerDrag() throws {
+    let (sidebar, container) = widthFixture()
+    let handle = container.resizeHandle
+    var collapses = 0
+    let realDrag = handle.onDrag
+    handle.onDrag = { x in
+        let collapsed = realDrag?(x) ?? false
+        if collapsed { collapses += 1 }
+        return collapsed
+    }
+    sidebar.setLibraryOpen(true)
+    container.layoutSubtreeIfNeeded()
+    let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 420, y: 300), modifierFlags: [], timestamp: 0,
+                                               windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    let collapseDrag = try #require(NSEvent.mouseEvent(with: .leftMouseDragged, location: NSPoint(x: 40, y: 300), modifierFlags: [], timestamp: 1,
+                                                       windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+    handle.mouseDown(with: down)
+    // Left of the collapse point, the first event collapses the sidebar; the rest of the drag
+    // must not run the collapse again and restart its motion.
+    handle.mouseDragged(with: collapseDrag)
+    handle.mouseDragged(with: collapseDrag)
+    handle.mouseDragged(with: collapseDrag)
+    #expect(collapses == 1)
+    #expect(container.sidebarState != "docked")
+}
+
 @MainActor
 private func libraryDescendants(_ view: NSView) -> [NSView] {
     view.subviews.flatMap { [$0] + libraryDescendants($0) }

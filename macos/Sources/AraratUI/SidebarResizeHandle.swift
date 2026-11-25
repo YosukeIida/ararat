@@ -77,15 +77,11 @@ public final class SidebarResizeHandle: NSView {
     }
 
     override public func mouseDragged(with event: NSEvent) {
-        // Why not resize the Library: its width is Arc's, not the user's, so a drag here would
-        // only write a width nothing shows and the close would jump to it. The drag still
-        // collapses the sidebar as before.
-        guard libraryWidth == nil else {
-            collapsedDuringDrag = onDrag?(event.locationInWindow.x) == true
-            return
-        }
         guard !collapsedDuringDrag else { return }
         if onDrag?(event.locationInWindow.x) == true { collapsedDuringDrag = true; return }
+        // Why not resize the Library: its width is Arc's, not the user's, so a drag here would
+        // only write a width nothing shows and the close would jump to it.
+        guard libraryWidth == nil else { return }
         sidebarWidth = dragStartWidth + event.locationInWindow.x - dragStartX
     }
 
