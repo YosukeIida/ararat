@@ -55,6 +55,11 @@ if isHelper {
   exit(chromeMain(CommandLine.argc, CommandLine.unsafeArgv))
 }
 
+if CommandLine.arguments.contains(SidebarPerformanceCheck.argument),
+   !SidebarPerformanceCheck.validArguments(CommandLine.arguments) {
+  fail("sidebar-performance requires scratch profile, database, fixture and mock keychain")
+}
+
 if CommandLine.arguments.contains(where: { ["--ararat-check=atc-routing", "--ararat-check=organize", "--ararat-screen=organize", "--ararat-check=look", "--ararat-screen=look", "--ararat-check=dock", "--ararat-screen=dock", "--ararat-check=downloads", "--ararat-screen=downloads", "--ararat-check=toasts", "--ararat-screen=toasts", "--ararat-check=split-focus", "--ararat-screen=split-focus", "--ararat-check=split-commands", "--ararat-screen=split-commands", "--ararat-check=header", "--ararat-screen=header", "--ararat-check=urlfield", "--ararat-screen=urlfield", "--ararat-check=site-controls", "--ararat-screen=site-controls", "--ararat-check=ext-actions", "--ararat-screen=ext-actions", "--ararat-screen=settings-frame", "--ararat-screen=settings-search", "--ararat-screen=settings-tabs", "--ararat-screen=settings-shortcuts", "--ararat-screen=settings-air-traffic", "--ararat-screen=settings-spaces", "--ararat-screen=space-wheel-motion", "--ararat-screen=settings-appearance", "--ararat-screen=settings-little-window", "--ararat-screen=settings-websites", "--ararat-screen=settings-general", "--ararat-screen=settings-privacy", "--ararat-screen=settings-extensions", "--ararat-screen=settings-about", "--ararat-screen=settings-toolbar", "--ararat-screen=onboarding", "--ararat-check=onboarding", "--ararat-check=window-drag", "--ararat-screen=window-drag", "--ararat-check=create-space", "--ararat-screen=create-space", "--ararat-check=folder-upload", "--ararat-screen=folder-upload", "--ararat-check=auto-archive", "--ararat-check=delete-space-live", "--ararat-screen=tab-switcher"].contains($0) }) {
   let args = CommandLine.arguments
   let temporary = [NSTemporaryDirectory(), "/tmp"].map { URL(fileURLWithPath: $0, isDirectory: true).resolvingSymlinksInPath().path + "/" }
@@ -1193,6 +1198,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
 
   func start(session: WorkspaceSession? = nil, shownSpace: String? = nil, reopening: Bool = false, privateProfile: String? = nil, restoringWindow: KeptWindow? = nil) throws {
     let arguments = CommandLine.arguments
+    let sidebarPerformance = session == nil && arguments.contains(SidebarPerformanceCheck.argument)
     let guardedOptions = PasswordsStoreCheck.guardOptions(arguments)
     let arcPasswordImport = guardedOptions.contains("--ararat-check=" + ArcPasswordImportCheck.mode)
     let checkName = arcPasswordImport ? ArcPasswordImportCheck.mode
@@ -1772,6 +1778,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
       host.installCheckDialogFactory()
     }
     if root == nil { installCoreMenu() }
+    if sidebarPerformance {
+      NSApp.activate(ignoringOtherApps: true)
+      host.window().makeKeyAndOrderFront(nil)
+      Task { @MainActor in await SidebarPerformanceCheck.run(self, host: host, arguments: arguments) }
+      return
+    }
     if let argument = arguments.first(where: { $0.hasPrefix("--ararat-measure=") }) {
       guard let symbol = dlsym(Launcher.handle, "AraratStartMeasure") else {
         throw NSError(domain: "Ararat.measure", code: 1)

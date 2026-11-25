@@ -1753,7 +1753,18 @@ public final class SidebarView: NSView {
 
     private var renderedURL: URLFieldContent?
 
+    public struct WorkCountsForCheck: Equatable {
+        public fileprivate(set) var reloads = 0
+        public fileprivate(set) var statusSweeps = 0
+        public fileprivate(set) var rowOrderChanges = 0
+
+        public init() {}
+    }
+
+    public var workCountsForCheck: WorkCountsForCheck?
+
     private func reload() {
+        workCountsForCheck?.reloads += 1
         traceSpaceWheelMotion("row-rebuild")
         defer { traceSpaceWheelMotion("row-rebuild-end") }
         renderSidebar()
@@ -2048,6 +2059,10 @@ public final class SidebarView: NSView {
             let states = Set(before.rowStates.keys).union(after.rowStates.keys)
             changed.formUnion(states.filter { before.rowStates[$0] != after.rowStates[$0] })
         }
+        if workCountsForCheck != nil, rowViews.count + favoriteTiles.count > 1,
+           rowViews.keys.allSatisfy(changed.contains), favoriteTiles.keys.allSatisfy(changed.contains) {
+            workCountsForCheck?.statusSweeps += 1
+        }
         for id in changed {
             if let view = rowViews[id] { applyPresentation(view) }
             if let tile = favoriteTiles[id] { applyFavoriteStatus(tile) }
@@ -2118,6 +2133,7 @@ public final class SidebarView: NSView {
 
     private func arrange(_ views: [NSView], in stack: NSStackView) {
         guard stack.arrangedSubviews != views else { return }
+        if stack === rows { workCountsForCheck?.rowOrderChanges += 1 }
         for (index, view) in views.enumerated() {
             if index >= stack.arrangedSubviews.count || stack.arrangedSubviews[index] !== view {
                 stack.insertArrangedSubview(view, at: index)
