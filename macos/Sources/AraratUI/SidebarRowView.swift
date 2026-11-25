@@ -106,8 +106,8 @@ final class SplitSegmentButton: NSButton {
     let fillShadow = SelectedRowShadow(name: "split-segment-shadow")
     let iconView = SidebarIconView()
     let titleField = NSTextField(labelWithString: "")
-    let preferredOpacity: CGFloat
-    private let crashed: Bool
+    var preferredOpacity: CGFloat { pane.unloaded || crashed ? SidebarMetrics.unloadedOpacity : 1 }
+    private var crashed: Bool
     private(set) var active: Bool
 
     var paneTitle: String { titleField.stringValue }
@@ -116,7 +116,6 @@ final class SplitSegmentButton: NSButton {
         self.pane = pane
         self.active = active
         self.crashed = crashed
-        preferredOpacity = pane.unloaded || crashed ? SidebarMetrics.unloadedOpacity : 1
         let outer = SidebarMetrics.cornerRadius
         let inner = SidebarMetrics.splitSegmentRadius
         let radii: (leading: CGFloat, trailing: CGFloat) = count <= 1 ? (outer, outer)
@@ -174,6 +173,15 @@ final class SplitSegmentButton: NSButton {
     func updateIcon(favicon: NSImage?) {
         let favicon = crashed ? nil : favicon
         iconView.setIcon(favicon: favicon, fallback: favicon == nil ? SidebarRowView.tabIcon(crashed: crashed) : nil)
+    }
+
+    func updatePresentation(favicon: NSImage?, crashed: Bool) {
+        if self.crashed != crashed {
+            self.crashed = crashed
+            alphaValue = preferredOpacity
+            refreshForeground()
+        }
+        updateIcon(favicon: favicon)
     }
 
     override var intrinsicContentSize: NSSize {
@@ -270,8 +278,8 @@ final class SidebarRowView: NSView {
     private let action: (Row) -> Void
     var onClose: ((String) -> Void)?
     var onMute: ((String, Bool) -> Void)?
-    var status: EngineAdapter.RowState? { didSet { updateStatus() } }
-    var favicon: NSImage? { didSet { updateIcon() } }
+    private var status: EngineAdapter.RowState?
+    private var favicon: NSImage?
     private let spinner = NSProgressIndicator()
     private let audioButton = NSButton()
     private var audioTitleTrailing: NSLayoutConstraint!
@@ -279,9 +287,9 @@ final class SidebarRowView: NSView {
     var audioLabel: String? { audioButton.isHidden ? nil : audioButton.accessibilityLabel() }
     func pressAudioForCheck() { audioButton.performClick(nil) }
     let closeButton = NSButton()
-    var crashed = false { didSet { updateStatus() } }
+    private var crashed = false
     // The unread dot (R7) is app state from the live strip, never stored in the row.
-    var unread = false { didSet { updateStatus() } }
+    private var unread = false
     var unreadDotVisible: Bool { !unreadDot.isHidden }
     var accent = SpaceAccent.teal { didSet { refreshUnreadAccent() } }
     var closeShortcutAction: Selector? { selected ? #selector(SidebarView.closeSelectedTab(_:)) : nil }
@@ -313,7 +321,7 @@ final class SidebarRowView: NSView {
     private var trackingPress = false
     private(set) var pressed = false { didSet { updateFill() } }
     private let titleMask = CAGradientLayer()
-    private var selected: Bool
+    private(set) var selected: Bool
     private let fill = NSView()
     let fillShadow = SelectedRowShadow(name: "row-selected-shadow")
     private let icon = SidebarIconView()
@@ -457,14 +465,20 @@ final class SidebarRowView: NSView {
         }
         fillLeading.constant = CGFloat(row.depth) * 16
         iconLeading.constant = SidebarMetrics.rowIconInset + CGFloat(row.depth) * 16
-        setAccessibilityLabel(title.stringValue)
+        if segmentRows.isEmpty { setAccessibilityLabel(title.stringValue) }
         updateStatus()
         updateFill()
         updateCloseButton()
         noteFocusRingMaskChanged()
     }
 
-    func updateSegments(_ members: [Row], active: String?, crashed: Set<String> = []) {
+    private var activeSegmentID: String?
+
+    @discardableResult
+    func updateSegments(_ members: [Row], active: String?, crashed: Set<String> = []) -> Bool {
+        let active = members.contains { $0.id == active } ? active : nil
+        guard members != segmentRows || active != activeSegmentID else { return false }
+        activeSegmentID = active
         segmentRows = members
         segments.arrangedSubviews.forEach { $0.removeFromSuperview() }
         // A split draws its panes' segments and nothing of its own: no row-level glyph, fill or
@@ -488,13 +502,25 @@ final class SidebarRowView: NSView {
         updateStatus()
         updateFill()
         setAccessibilityLabel(drawing ? "Split: " + members.map(Self.paneName).joined(separator: ", ") : title.stringValue)
+        return true
     }
 
-    func updateFavicons(_ favicons: [String: NSImage]) {
-        favicon = favicons[row.id]
-        for case let segment as SplitSegmentButton in segments.arrangedSubviews {
-            segment.updateIcon(favicon: favicons[segment.pane.id])
-        }
+    var paneIDs: [String] { segmentRows.map(\.id) }
+
+    func updatePanePresentation(id: String, favicon: NSImage?, crashed: Bool) {
+        guard let index = segmentRows.firstIndex(where: { $0.id == id }),
+              let segment = segments.arrangedSubviews[index] as? SplitSegmentButton else { return }
+        segment.updatePresentation(favicon: favicon, crashed: crashed)
+    }
+
+    func updatePresentation(status: EngineAdapter.RowState? = nil, favicon: NSImage? = nil,
+                            crashed: Bool = false, unread: Bool = false) {
+        guard self.status != status || self.favicon !== favicon || self.crashed != crashed || self.unread != unread else { return }
+        self.status = status
+        self.favicon = favicon
+        self.crashed = crashed
+        self.unread = unread
+        updateStatus()
     }
 
     // A pane with no title reads as its host, as the row's own name does.

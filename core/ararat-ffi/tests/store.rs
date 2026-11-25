@@ -33,6 +33,28 @@ fn reimport_does_not_duplicate_favorites_or_write_profile_ownership() {
     assert_eq!(conn.query_row("SELECT count(*) FROM journal WHERE kind = 'favorites'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
 }
 
+#[test]
+fn reimport_keeps_a_mapped_tab_open() {
+    let path = fresh_db("reimport-live-tab");
+    let store = WorkspaceStore::open(path.display().to_string()).unwrap();
+    let import = || store.import_arc_sidebar("window".into(), FIXTURE.into(), None, None, None, None).unwrap().snapshot;
+    let item = "tab-mail".to_string();
+    let url = "https://mail.example.com/".to_string();
+    assert!(import().spaces[0].favorites[0].unloaded);
+    store.show_space("window".into(), "space-work".into()).unwrap();
+    let open = store.live_open(item.clone(), url).unwrap();
+    store.live_apply(LiveTransaction { off_the_record: false, epoch: 1, rev: 0, cause: LiveCause::Engine,
+        strips: vec![LiveStrip { window: "window".into(), tabs: vec![LiveTab {
+            off_the_record: false, profile: Profile::Default, live_id: open.id.clone(), item: Some(item.clone()),
+            opener: None, navigated: false, url: None, title: None,
+        }], active: Some(open.id.clone()) }] }).unwrap();
+    let snapshot = import();
+    assert!(!snapshot.spaces[0].favorites[0].unloaded);
+    assert_eq!(snapshot.selected_id.as_deref(), Some(item.as_str()));
+    assert_eq!(store.live_tab(item), Some(open.id));
+    assert!(snapshot.spaces[0].pinned.iter().filter(|row| row.kind == RowKind::Tab).all(|row| row.unloaded));
+}
+
 fn fresh_db(name: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("ffi-{name}.sqlite"));
     for suffix in ["", "-wal", "-shm"] {
@@ -210,6 +232,7 @@ fn closing_a_today_tab_persists_lifecycle_and_successor_before_returning() {
     let path = fresh_db("close-today");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
     store.import_arc_sidebar("test".into(), today_fixture(), None, None, None, None).unwrap().snapshot;
+    store.select_item("test".into(), "tab-b".into()).unwrap();
     store.select_item("test".into(), "tab-a".into()).unwrap();
     let closed = store.close_item("test".into(), "tab-a".into()).unwrap();
     assert_eq!(closed.selected_id.as_deref(), Some("tab-b"));
@@ -247,6 +270,7 @@ fn a_failed_close_flush_keeps_the_edit_for_retry() {
     let path = fresh_db("close-busy");
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
     store.import_arc_sidebar("test".into(), today_fixture(), None, None, None, None).unwrap().snapshot;
+    store.select_item("test".into(), "tab-b".into()).unwrap();
     store.select_item("test".into(), "tab-a".into()).unwrap();
     store.flush().unwrap();
     let blocker = Connection::open(&path).unwrap();
@@ -416,8 +440,12 @@ fn split_close_and_both_member_orders_leave_no_empty_selection_after_reopen() {
 #[test]
 fn selecting_rows_persists_time_and_history_locally() {
     let path = fresh_db("local-clicks");
+    let mut workspace = import::arc_sidebar(&split_today_fixture(), None, None, None, None).unwrap().0;
+    for id in ["tab-spec", "tab-mail", "tab-a", "tab-b"] {
+        workspace.items.get_mut(id).unwrap().lifecycle = ararat_core::model::Lifecycle::Open;
+    }
+    let (disk, _) = Store::open(&path).unwrap(); disk.write(workspace.to_ops()); disk.flush().unwrap(); drop(disk);
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
-    store.import_arc_sidebar("test".into(), split_today_fixture(), None, None, None, None).unwrap().snapshot;
     let conn = Connection::open(&path).unwrap();
     let count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
     let before = count();
@@ -481,6 +509,9 @@ fn shown_space_is_local_persistent_and_limits_successors_after_reopen() {
     let path = fresh_db("shown-space");
     let mut ws = import::arc_sidebar(&today_fixture(), None, None, None, None).unwrap().0;
     for id in ["tab-a", "tab-b"] { ws.items.get_mut(id).unwrap().membership.parent = Some("today-home".into()); }
+    for id in ["tab-spec", "tab-a", "tab-b"] {
+        ws.items.get_mut(id).unwrap().lifecycle = ararat_core::model::Lifecycle::Open;
+    }
     let (disk, _) = Store::open(&path).unwrap(); disk.write(ws.to_ops()); disk.flush().unwrap(); drop(disk);
     let store = WorkspaceStore::open(path.display().to_string()).unwrap();
     let conn = Connection::open(&path).unwrap();
@@ -807,7 +838,7 @@ fn unpin_refreshes_local_usage_in_the_same_persisted_edit() {
     assert!(reopened.last_selected["tab-spec"] >= now); assert_eq!(count(), journal + 1); drop(disk);
     store.live_auto_archive("one".into(), now + 1).unwrap();
     let (disk, reopened) = Store::open(&path).unwrap();
-    assert_eq!(reopened.items["tab-spec"].lifecycle, ararat_core::model::Lifecycle::Open); drop(disk);
+    assert_eq!(reopened.items["tab-spec"].lifecycle, ararat_core::model::Lifecycle::Unloaded); drop(disk);
 }
 
 #[test]

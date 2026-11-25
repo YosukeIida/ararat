@@ -32,10 +32,11 @@ private final class FaviconRequests {
 private final class FaviconHost: NSObject {
     var urls: [String] = []
     var profiles: [String] = []
+    var tabReads = 0
 
     @objc func isClosing() -> Bool { false }
     @objc func isClosingAll() -> Bool { false }
-    @objc func tabs() -> [Any] { [] }
+    @objc func tabs() -> [Any] { tabReads += 1; return [] }
 
     @objc(faviconForPageURL:profileDirectory:completion:)
     func favicon(_ url: String, profile: String, completion: @escaping (NSImage?) -> Void) -> Bool {
@@ -173,7 +174,7 @@ struct SidebarFaviconCacheTests {
     }
 
     @Test(arguments: [false, true])
-    func requestsUseThePresentedRowsAndProfile(privateWindow: Bool) {
+    func requestsUseThePresentedRowsAndProfile(privateWindow: Bool) async {
         _ = NSApplication.shared
         class_addProtocol(FaviconHost.self, objc_getProtocol("ARWindowHostAPI")!)
         let host = FaviconHost()
@@ -193,9 +194,15 @@ struct SidebarFaviconCacheTests {
         runtime.isPrivateWindow = privateWindow
         runtime.snapshot = snapshot
         runtime.sidebar = SidebarView(snapshot: snapshot)
-        runtime.refreshSidebarFavicons()
+        runtime.scheduleSidebarRowPresentation()
+        runtime.scheduleSidebarRowPresentation()
+        #expect(host.tabReads == 0)
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            RunLoop.main.perform(inModes: [.common, .modalPanel]) { done.resume() }
+        }
 
         let expected = privateWindow ? [] : [pin, favorite, pane].compactMap(\.url).sorted()
+        #expect(host.tabReads == 1)
         #expect(host.urls.sorted() == expected)
         #expect(host.profiles == Array(repeating: "Work", count: expected.count))
     }

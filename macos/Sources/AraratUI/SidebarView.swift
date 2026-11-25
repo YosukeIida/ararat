@@ -266,6 +266,7 @@ public final class SidebarView: NSView {
     private var pendingPinHint: (id: String, staleSelection: String?)?
     var renameHintClock: () -> CFTimeInterval = CACurrentMediaTime
     private var rowViews: [String: SidebarRowView] = [:]
+    private var splitOwners: [String: String] = [:]
     private var noTabsRows: [String: SidebarNoTabsRow] = [:]
     private var retiringRows: [String: SidebarRowView] = [:]
     private var fadeFrame: (id: String, frame: NSRect)?
@@ -293,21 +294,38 @@ public final class SidebarView: NSView {
     // U25b: the app’s per-window row state — the row switch from the core’s settings record
     // and the live strip’s crashed and unread tabs. The section’s chevron rides in the space
     // snapshot (pinned_collapsed), so every window shows the same one.
-    public var newTabRowShown = true { didSet { reload() } }
+    public var newTabRowShown = true {
+        didSet {
+            guard oldValue != newTabRowShown else { return }
+            if newTabRowShown {
+                let list = rows.arrangedSubviews
+                let index = list.firstIndex(of: todayDivider).map { $0 + 1 } ?? list.count
+                rows.insertArrangedSubview(newTabRow, at: index)
+            } else {
+                newTabRow.removeFromSuperview()
+            }
+        }
+    }
     /// U27d: the Appearance pane's Tooltips switch, applied to this sidebar's tooltip. Off, row
     /// tooltips and button tooltips stay silent; the rows' accessibility help is unchanged.
     public var tooltipsShown = true { didSet { tooltip.isEnabled = tooltipsShown } }
     // The Spaces pane's Natural / Reversed choice (U27c): one setting for every window, read
     // from the workspace's settings record and handed to the paging pipeline.
     public var spaceScrollDirection: SpaceScrollDirection = .natural
-    public var rowStates: [String: EngineAdapter.RowState] = [:] { didSet { applyRowStatus() } }
-    public var favicons: [String: NSImage] = [:] {
-        didSet {
-            guard oldValue != favicons else { return }
-            for view in rowViews.values { view.updateFavicons(favicons) }
-            for tile in favoriteTiles.values { applyFavoriteStatus(tile) }
-            dragCopyView?.updateFavicons(favicons)
-        }
+    public struct RowPresentation {
+        public var rowStates: [String: EngineAdapter.RowState] = [:]
+        public var favicons: [String: NSImage] = [:]
+        public var crashedItems: Set<String> = []
+        public var unreadItems: Set<String> = []
+    }
+
+    public private(set) var rowPresentation = RowPresentation()
+    private var paintedRowPresentation = RowPresentation()
+
+    public func stageRowPresentation(rowStates: [String: EngineAdapter.RowState], crashedItems: Set<String>, unreadItems: Set<String>) {
+        rowPresentation.rowStates = rowStates
+        rowPresentation.crashedItems = crashedItems
+        rowPresentation.unreadItems = unreadItems
     }
     public var onFaviconRowsChanged: (() -> Void)?
 
@@ -319,8 +337,6 @@ public final class SidebarView: NSView {
         }
     }
     public var onMute: ((String, Bool) -> Void)?
-    public var crashedItems: Set<String> = [] { didSet { applyRowStatus() } }
-    public var unreadItems: Set<String> = [] { didSet { applyRowStatus() } }
     public var onNewTab: (() -> Void)?
     public var onClearToday: (() -> Void)?
     // U26f: a private window is one space with Today only: no pins, favourites, folders, dock
@@ -332,7 +348,7 @@ public final class SidebarView: NSView {
     private var scrollAxis: ScrollAxis?
     private weak var gestureScroll: NSScrollView?
     private var scrollPreviews: [SidebarView] = []
-    private var preparedScrollPreviews: [Int: SidebarView] = [:]
+    private var preparedScrollPreviews: [String: SidebarView] = [:]
     private var scrollPrebuildScheduled = false
     private var deferredScrollSnapshots: [(SidebarView) -> Void] = []
     private var scrollSnapshotDrainScheduled = false
@@ -379,16 +395,21 @@ public final class SidebarView: NSView {
         momentumQuietTimer = nil
     }
     private var scrollGeneration = 0
-    private var isScrollPreview = false
+    private let isScrollPreview: Bool
     private let favoriteIconText: (String) -> String?
     private var laidOutSidebarWidth: CGFloat = 0
     private var spacePagePitch: Double { Double(bounds.width) }
 
-    public init(snapshot: WorkspaceSnapshot, favoriteIconText: @escaping (String) -> String? = { _ in nil }) {
+    public convenience init(snapshot: WorkspaceSnapshot, favoriteIconText: @escaping (String) -> String? = { _ in nil }) {
+        self.init(snapshot: snapshot, favoriteIconText: favoriteIconText, previewIndex: nil)
+    }
+
+    private init(snapshot: WorkspaceSnapshot, favoriteIconText: @escaping (String) -> String?, previewIndex: Int?) {
         self.snapshot = snapshot
         self.favoriteIconText = favoriteIconText
+        self.isScrollPreview = previewIndex != nil
         self.selectedID = Self.sidebarSelection(snapshot)
-        self.spaceIndex = snapshot.spaces.firstIndex { $0.id == snapshot.shownSpaceId } ?? 0
+        self.spaceIndex = previewIndex ?? snapshot.spaces.firstIndex { $0.id == snapshot.shownSpaceId } ?? 0
         super.init(frame: .zero)
         build()
         reload()
@@ -784,7 +805,7 @@ public final class SidebarView: NSView {
         traceSpaceWheelMotion("snapshot-update")
         if deferScrollSnapshot({ $0.update(snapshot: snapshot) }) { return }
         defer { requestedCloses.removeAll() }
-        if self.snapshot.shownSpaceId == snapshot.shownSpaceId,
+        if !requestedCloses.isEmpty, self.snapshot.shownSpaceId == snapshot.shownSpaceId,
            let current = snapshotSpace, snapshot.spaces.contains(where: { $0.id == current.id }) {
             let remaining = Set(snapshot.spaces.flatMap { $0.today + $0.pinned + $0.favorites }.map(\.id))
             let removed = (current.today + current.pinned + current.favorites).filter { !remaining.contains($0.id) }
@@ -795,12 +816,7 @@ public final class SidebarView: NSView {
                 return
             }
         }
-        finishRowMotion()
-        replaceSnapshot(snapshot)
-        library.update(archive: snapshot.archive)
-        tooltip.capture(in: library)
-        layoutSubtreeIfNeeded()
-        rowViews.values.forEach { $0.refreshHover() }
+        replaceSnapshot(snapshot, finishMotion: true)
     }
 
     private func applyPrivateMode() {
@@ -818,9 +834,10 @@ public final class SidebarView: NSView {
 
     public func updateSelection(id: String?) {
         guard selectedID != id else { return }
+        let previous = renderContext
         selectedID = id
         snapshot.selectedId = id
-        reload()
+        renderSidebar(previous: previous)
         revealSelection()
     }
 
@@ -849,53 +866,68 @@ public final class SidebarView: NSView {
     public func applySelection(snapshot: WorkspaceSnapshot) {
         traceSpaceWheelMotion("snapshot-selection")
         if deferScrollSnapshot({ $0.applySelection(snapshot: snapshot) }) { return }
-        let snapshot = keepingLookPreview(snapshot)
-        let selected = Self.sidebarSelection(snapshot)
-        let selectionChanged = selectedID != selected
-        let focusedPaneChanged = self.snapshot.selectedId != snapshot.selectedId
-        if self.snapshot.spaces == snapshot.spaces {
-            self.snapshot = snapshot
-            if selectionChanged || focusedPaneChanged { selectedID = selected; reload() }
-        }
-        else { replaceSnapshot(snapshot) }
-        library.update(archive: snapshot.archive)
-        tooltip.capture(in: library)
-        if selectionChanged { revealSelection() }
+        let selection = selectedID
+        replaceSnapshot(snapshot)
+        if selectedID != selection { revealSelection() }
     }
 
-    private func replaceSnapshot(_ snapshot: WorkspaceSnapshot) {
+    private static func sameOutline(_ old: [Row], _ new: [Row]) -> Bool {
+        old.elementsEqual(new) {
+            $0.id == $1.id && $0.parentId == $1.parentId && $0.depth == $1.depth &&
+                $0.kind == $1.kind && $0.collapsed == $1.collapsed
+        }
+    }
+
+    private func replaceSnapshot(_ snapshot: WorkspaceSnapshot, finishMotion: Bool = false) {
         traceSpaceWheelMotion("snapshot-replace")
-        if deferScrollSnapshot({ $0.replaceSnapshot(snapshot) }) { return }
+        if deferScrollSnapshot({ $0.replaceSnapshot(snapshot, finishMotion: finishMotion) }) { return }
         let snapshot = keepingLookPreview(snapshot)
-        layoutSubtreeIfNeeded()
-        listScroll.stopReveal()
-        let wasScrolled = listScroll.contentView.bounds.minY > 0.5
-        let anchors = rowViews.values.map { ($0.row.id, listScroll.documentView!.convert($0.bounds, from: $0)) }
-            .filter { $0.1.intersects(listScroll.contentView.bounds) && $0.0 != drag?.row.id }
-            .sorted { $0.1.minY < $1.1.minY }
-            .map { ($0.0, $0.1.minY - listScroll.contentView.bounds.minY) }
+        let previous = renderContext
         let oldSpace = self.snapshot.spaces.indices.contains(spaceIndex) ? self.snapshot.spaces[spaceIndex] : nil
-        let shownID = oldSpace?.id
-        if drag != nil, let oldSpace, snapshot.spaces.first(where: { $0.id == oldSpace.id })?.pinned != oldSpace.pinned {
+        let nextIndex = snapshot.spaces.firstIndex { $0.id == oldSpace?.id }
+            ?? (oldSpace == nil ? snapshot.spaces.firstIndex { $0.id == snapshot.shownSpaceId } : nil)
+            ?? min(spaceIndex, max(0, snapshot.spaces.count - 1))
+        let nextSpace = snapshot.spaces.indices.contains(nextIndex) ? snapshot.spaces[nextIndex] : nil
+        let pinsChanged = !Self.sameOutline(oldSpace?.pinned ?? [], nextSpace?.pinned ?? [])
+        let layoutChanged = oldSpace?.id != nextSpace?.id || pinsChanged ||
+            !Self.sameOutline(oldSpace?.today ?? [], nextSpace?.today ?? []) ||
+            !Self.sameOutline(oldSpace?.favorites ?? [], nextSpace?.favorites ?? [])
+        if layoutChanged && finishMotion { finishRowMotion() }
+        let anchors = layoutChanged ? visibleRowAnchors() : []
+        if drag != nil, pinsChanged {
             drag?.sprungFolders.removeAll()
             drag?.folderHover.aim(at: nil, now: dragClock())
         }
-        clearScrollPresentation()
-        spaceScroll = SpaceScrollState()
-        self.snapshot = snapshot
-        spaceListOrigins = spaceListOrigins.filter { id, _ in snapshot.spaces.contains { $0.id == id } }
-        spaceIndex = snapshot.spaces.firstIndex { $0.id == shownID }
-            ?? (shownID == nil ? snapshot.spaces.firstIndex { $0.id == snapshot.shownSpaceId } : nil)
-            ?? min(spaceIndex, max(0, snapshot.spaces.count - 1))
-        selectedID = Self.sidebarSelection(snapshot)
-        library.update(archive: snapshot.archive)
-        tooltip.capture(in: library)
-        reload()
-        layoutSubtreeIfNeeded()
-        if wasScrolled, let anchor = anchors.first(where: { rowViews[$0.0] != nil }), let row = rowViews[anchor.0] {
-            listScroll.move(to: listScroll.documentView!.convert(row.bounds, from: row).minY - anchor.1)
+        if layoutChanged {
+            listScroll.stopReveal()
+            clearScrollPresentation()
+            spaceScroll = SpaceScrollState()
         }
-        refreshPointer()
+        self.snapshot = snapshot
+        if !previous.snapshot.spaces.elementsEqual(snapshot.spaces, by: { $0.id == $1.id }) {
+            let surviving = Set(snapshot.spaces.map(\.id))
+            spaceListOrigins = spaceListOrigins.filter { surviving.contains($0.key) }
+        }
+        spaceIndex = nextIndex
+        if previous.snapshot != snapshot { selectedID = Self.sidebarSelection(snapshot) }
+        renderSidebar(previous: previous)
+        if layoutChanged {
+            layoutSubtreeIfNeeded()
+            if let document = listScroll.documentView,
+               let anchor = anchors.first(where: { rowViews[$0.0] != nil }), let row = rowViews[anchor.0] {
+                listScroll.move(to: document.convert(row.bounds, from: row).minY - anchor.1)
+            }
+            refreshPointer()
+        }
+    }
+
+    private func visibleRowAnchors() -> [(String, CGFloat)] {
+        let viewport = listScroll.contentView.bounds
+        guard viewport.minY > 0.5, let document = listScroll.documentView else { return [] }
+        return rowViews.values.map { ($0.row.id, document.convert($0.bounds, from: $0)) }
+            .filter { $0.1.intersects(viewport) && $0.0 != drag?.row.id }
+            .sorted { $0.1.minY < $1.1.minY }
+            .map { ($0.0, $0.1.minY - viewport.minY) }
     }
 
     public func applyClose(id: String, snapshot: WorkspaceSnapshot) {
@@ -1014,8 +1046,9 @@ public final class SidebarView: NSView {
     }
 
     public func showSpaceWithoutNotification(id: String) {
-        if showingScrollPages && scrollPageIndex == spaceIndex && snapshotSpace?.id == id {
-            traceSpaceWheelMotion("space-reply-matched")
+        if snapshotSpace?.id == id, !showingScrollPages || scrollPageIndex == spaceIndex {
+            if showingScrollPages { traceSpaceWheelMotion("space-reply-matched") }
+            else { revealSelection(animated: false) }
             return
         }
         showSpace(id: id, animatedReveal: false, notify: false)
@@ -1708,28 +1741,95 @@ public final class SidebarView: NSView {
         updateDockSelection()
     }
 
+    private struct RenderContext {
+        let snapshot: WorkspaceSnapshot
+        let space: SpaceSnapshot?
+        let selection: String?
+    }
+
+    private var renderContext: RenderContext {
+        RenderContext(snapshot: snapshot, space: snapshotSpace, selection: selectedID)
+    }
+
+    private var renderedURL: URLFieldContent?
+
+    public struct WorkCountsForCheck: Equatable {
+        public fileprivate(set) var reloads = 0
+        public fileprivate(set) var statusSweeps = 0
+        public fileprivate(set) var rowOrderChanges = 0
+
+        public init() {}
+    }
+
+    public var workCountsForCheck: WorkCountsForCheck?
+
     private func reload() {
+        workCountsForCheck?.reloads += 1
+        traceSpaceWheelMotion("row-rebuild")
+        defer { traceSpaceWheelMotion("row-rebuild-end") }
+        renderSidebar()
+    }
+
+    private func renderSidebar(previous: RenderContext? = nil) {
+        let space = snapshotSpace
+        let oldSpace = previous?.space
+        let spaceChanged = previous == nil || oldSpace?.id != space?.id
         if let row = wheelDrawnRow {
             row.space = spaceIndex
             if row.superview == nil { spaceColumn.addSubview(row) }
         }
-        traceSpaceWheelMotion("row-rebuild")
-        defer { traceSpaceWheelMotion("row-rebuild-end") }
-        defer { refreshLook() }
-        let space = snapshotSpace
-        if let session = historySession, let profile = space?.profileName { showHistoryFailure(session.historyPurgeFailed(profile: profile)) }
-        if space?.id != hintSpaceID {
-            pendingPinHint = nil
-            rowViews.values.forEach { $0.hideRenameHint("space-change") }
-            hintSpaceID = space?.id
+        if spaceChanged {
+            if let session = historySession, let profile = space?.profileName {
+                showHistoryFailure(session.historyPurgeFailed(profile: profile))
+            }
+            if space?.id != hintSpaceID {
+                pendingPinHint = nil
+                rowViews.values.forEach { $0.hideRenameHint("space-change") }
+                hintSpaceID = space?.id
+            }
         }
-        lookSettings?.update(snapshot: snapshot)
-        spaceNameRow.space = space
-        let pinned = space?.pinned ?? []
+        if previous?.snapshot != snapshot { lookSettings?.update(snapshot: snapshot) }
+        let nameChanged = spaceChanged || oldSpace?.icon != space?.icon || oldSpace?.title != space?.title ||
+            oldSpace?.pinnedCollapsed != space?.pinnedCollapsed
+        if nameChanged {
+            spaceNameRow.space = space
+            tooltip.capture(in: spaceNameRow)
+        }
+        let pins = space?.pinned ?? []
         let today = space?.today ?? []
-        let selected = ((space?.favorites ?? []) + pinned + today).first { $0.id == selectedID }
-        let url = selected == nil ? nil : selectedURL
-        let content = URLFieldContent(url: url, hasTab: selected != nil)
+        let favorites = space?.favorites ?? []
+        let selected = (favorites + pins + today).contains { $0.id == selectedID }
+        updateURLField(URLFieldContent(url: selected ? selectedURL : nil, hasTab: selected), force: previous == nil)
+
+        let favoritesChanged = spaceChanged || oldSpace?.favorites != space?.favorites
+        if favoritesChanged { reloadFavorites() }
+        let listChanged = spaceChanged || oldSpace?.pinned != space?.pinned || oldSpace?.today != space?.today
+        let selectionChanged = previous?.selection != selectedID || previous?.snapshot.selectedId != snapshot.selectedId
+        if listChanged || selectionChanged {
+            reconcileRows(pinned: pins, today: today)
+        }
+        let dockChanged = previous.map {
+            !$0.snapshot.spaces.elementsEqual(snapshot.spaces) {
+                $0.id == $1.id && $0.title == $1.title && $0.icon == $1.icon && $0.look == $1.look
+            }
+        } ?? true
+        if spaceChanged || dockChanged {
+            updateSpaceDock()
+            tooltip.capture(in: dock)
+        }
+        if previous?.snapshot.archive != snapshot.archive {
+            library.update(archive: snapshot.archive)
+            tooltip.capture(in: library)
+        }
+        if previous == nil { tooltip.capture(in: self) }
+        if listChanged || selectionChanged { showPendingPinHint() }
+        if listChanged || favoritesChanged { onFaviconRowsChanged?() }
+        if spaceChanged || oldSpace?.look != space?.look { refreshLook() }
+    }
+
+    private func updateURLField(_ content: URLFieldContent, force: Bool) {
+        guard force || renderedURL != content else { return }
+        renderedURL = content
         copyLinkButton.isEnabled = content.canCopy
         copyLinkButton.isHidden = content.hidesButtons
         siteControlsButton.isHidden = content.hidesButtons
@@ -1743,15 +1843,15 @@ public final class SidebarView: NSView {
         hostClip.fadesStart = content.isHost
         hostClip.needsLayout = true
         hostClip.layoutSubtreeIfNeeded()
+    }
 
-        reloadFavorites()
-
+    private func reconcileRows(pinned: [Row], today: [Row]) {
         let allRows = pinned + today
-        let splitIDs = Set(allRows.filter { $0.kind == .split }.map(\.id))
+        let byID = Dictionary(allRows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let hidden = Set(allRows.filter { row in
             var parent = row.parentId
-            while let ancestor = allRows.first(where: { $0.id == parent }) {
-                if splitIDs.contains(ancestor.id) { return true }
+            while let ancestor = byID[parent] {
+                if ancestor.kind == .split { return true }
                 parent = ancestor.parentId
             }
             return false
@@ -1761,7 +1861,8 @@ public final class SidebarView: NSView {
         for id in Array(noTabsRows.keys) where !ids.contains(id) {
             noTabsRows.removeValue(forKey: id)?.removeFromSuperview()
         }
-        var ordered: [NSView] = pinned.filter { !hidden.contains($0.id) }.map { listView(for: $0) }
+        splitOwners.removeAll(keepingCapacity: true)
+        var ordered: [NSView] = pinned.filter { !hidden.contains($0.id) }.map { listView(for: $0, pinned: true) }
         if today.isEmpty {
             todayDivider.removeFromSuperview()
         } else {
@@ -1775,9 +1876,11 @@ public final class SidebarView: NSView {
         } else {
             newTabRow.removeFromSuperview()
         }
-        ordered.append(contentsOf: today.filter { !hidden.contains($0.id) }.map { listView(for: $0) })
+        ordered.append(contentsOf: today.filter { !hidden.contains($0.id) }.map { listView(for: $0, pinned: false) })
         arrange(ordered, in: rows)
+    }
 
+    private func updateSpaceDock() {
         if !privateWindow, dock.subviews.compactMap({ ($0 as? SpaceDockButton)?.spaceID }) != snapshot.spaces.map(\.id) {
             dockLookPopover.performClose(nil)
             dock.subviews.forEach { $0.removeFromSuperview() }
@@ -1802,9 +1905,6 @@ public final class SidebarView: NSView {
             updateDockSelection()
             dock.layoutSubtreeIfNeeded()
         }
-        tooltip.capture(in: self)
-        showPendingPinHint()
-        onFaviconRowsChanged?()
     }
 
     private func reloadFavorites() {
@@ -1848,21 +1948,20 @@ public final class SidebarView: NSView {
             let start = index * columns
             var tiles: [NSView] = models[start..<min(start + columns, models.count)].map { row in
                 guard let row else { return NSView() }
-                let iconText = row.url.flatMap(favoriteIconText)
                 let tile: FavoriteTile
                 if let existing = favoriteTiles[row.id] {
                     tile = existing
-                    tile.update(row: row, iconText: iconText)
+                    if tile.row != row { tile.update(row: row, iconText: row.url.flatMap(favoriteIconText)) }
                 } else {
-                    tile = FavoriteTile(row: row, iconText: iconText) { [weak self] row in self?.select(row) }
-                }
-                favoriteTiles[row.id] = tile
-                tile.accent = spaceAccent
-                applyFavoriteStatus(tile)
-                wireDrag(tile)
-                tile.menuProvider = { [weak self, weak tile] in
-                    guard let self, !self.isScrollPreview, let tile else { return nil }
-                    return self.favoriteMenu(row: tile.row)
+                    tile = FavoriteTile(row: row, iconText: row.url.flatMap(favoriteIconText)) { [weak self] row in self?.select(row) }
+                    favoriteTiles[row.id] = tile
+                    tile.accent = spaceAccent
+                    applyFavoriteStatus(tile)
+                    wireDrag(tile)
+                    tile.menuProvider = { [weak self, weak tile] in
+                        guard let self, !self.isScrollPreview, let tile else { return nil }
+                        return self.favoriteMenu(row: tile.row)
+                    }
                 }
                 tile.refusesFirstResponder = isScrollPreview
                 return tile
@@ -1877,53 +1976,60 @@ public final class SidebarView: NSView {
         tooltip.capture(in: favorites)
     }
 
-    private func rowView(for row: Row) -> SidebarRowView {
+    private func rowView(for row: Row, pinned: Bool) -> SidebarRowView {
         let view: SidebarRowView
-        if let existing = rowViews[row.id] {
+        let selected = row.id == selectedID
+        let existing = rowViews[row.id]
+        if let existing {
             view = existing
         } else {
-            view = SidebarRowView(row: row, selected: row.id == selectedID) { [weak self] row in self?.select(row) }
+            view = SidebarRowView(row: row, selected: selected) { [weak self] row in self?.select(row) }
             rowViews[row.id] = view
             rows.addArrangedSubview(view)
             view.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
-        }
-        view.hintClock = { [weak self] in self?.renameHintClock() ?? CACurrentMediaTime() }
-        view.hintReduceMotion = { [weak self] in self?.dragReduceMotion() ?? true }
-        wireDrag(view)
-        view.menuProvider = { [weak self, weak view] pane in
-            guard let self, let row = view?.row else { return nil }
-            switch row.kind {
-            case .folder: return self.folderMenu(row: row)
-            case .split: return self.splitMenu(row: row, pane: pane)
-            case .tab: return view?.pinned == true ? self.pinnedMenu(row: row) : self.todayMenu(row: row)
-            case .noTabs: return nil
+            view.accent = spaceAccent
+            view.hintClock = { [weak self] in self?.renameHintClock() ?? CACurrentMediaTime() }
+            view.hintReduceMotion = { [weak self] in self?.dragReduceMotion() ?? true }
+            wireDrag(view)
+            view.menuProvider = { [weak self, weak view] pane in
+                guard let self, let row = view?.row else { return nil }
+                switch row.kind {
+                case .folder: return self.folderMenu(row: row)
+                case .split: return self.splitMenu(row: row, pane: pane)
+                case .tab: return view?.pinned == true ? self.pinnedMenu(row: row) : self.todayMenu(row: row)
+                case .noTabs: return nil
+                }
             }
+            view.onRename = { [weak self] row in self?.beginRename(id: row.id) }
+            view.onRenameCommit = { [weak self] row, title, done in self?.commitRename(row: row, title: title, completion: done) }
+            view.onRenameEnd = { [weak self] in
+                guard let self, self.renamingID == row.id else { return }
+                self.renamingID = nil; self.notifyAutoArchiveReady()
+            }
+            view.onClose = { [weak self] id in
+                guard let self, let target = self.closeTarget(for: id) else { return }
+                // R1/D2: the button showed Close (a loaded pin’s −) or Archive; it passes that and the
+                // id it showed, so a stale click cannot be upgraded in the queue.
+                if target.action == .archive { self.onArchive?(target.id) } else { self.onClose?(target.id) }
+            }
+            view.onMute = { [weak self] id, muted in self?.onMute?(id, muted) }
         }
-        view.onRename = { [weak self] row in self?.beginRename(id: row.id) }
-        view.onRenameCommit = { [weak self] row, title, done in self?.commitRename(row: row, title: title, completion: done) }
-        view.onRenameEnd = { [weak self] in
-            guard let self, self.renamingID == row.id else { return }
-            self.renamingID = nil; self.notifyAutoArchiveReady()
-        }
-        view.pinned = snapshotSpace?.pinned.contains { $0.id == row.id } == true
-        view.privateWindow = privateWindow
-        view.accent = spaceAccent
-        view.onClose = { [weak self] id in
-            guard let self, let target = self.closeTarget(for: id) else { return }
-            // R1/D2: the button showed Close (a loaded pin’s −) or Archive; it passes that and the
-            // id it showed, so a stale click cannot be upgraded in the queue.
-            if target.action == .archive { self.onArchive?(target.id) } else { self.onClose?(target.id) }
-        }
-        view.onMute = { [weak self] id, muted in self?.onMute?(id, muted) }
-        view.status = rowStates[row.id]
+        let placementChanged = view.pinned != pinned || view.privateWindow != privateWindow
+        if view.pinned != pinned { view.pinned = pinned }
+        if view.privateWindow != privateWindow { view.privateWindow = privateWindow }
         view.closeCaps = closeCaps
-        view.update(row: row, selected: row.id == selectedID)
-        view.crashed = crashedItems.contains(row.id)
-        view.unread = unreadItems.contains(row.id)
-        if row.kind == .split {
-            view.updateSegments(paneRows(of: row.id), active: snapshot.selectedId, crashed: crashedItems)
-        } else { view.updateSegments([], active: nil) }
-        view.updateFavicons(favicons)
+        let changed = placementChanged || view.row != row || view.selected != selected
+        if changed {
+            view.update(row: row, selected: selected)
+        }
+        let panes = row.kind == .split ? paneRows(of: row.id) : []
+        let rebuilt = view.updateSegments(panes, active: snapshot.selectedId, crashed: paintedRowPresentation.crashedItems)
+        for pane in panes {
+            splitOwners[pane.id] = row.id
+            if rebuilt { applyPanePresentation(view, id: pane.id) }
+        }
+        applyPresentation(view)
+        if existing == nil || changed || rebuilt { tooltip.capture(in: view) }
         view.acceptsKeyboardFocus = !isScrollPreview
         return view
     }
@@ -1939,24 +2045,59 @@ public final class SidebarView: NSView {
         return view
     }
 
-    private func applyRowStatus() {
-        for (id, view) in rowViews {
-            view.status = rowStates[id]
-            view.crashed = crashedItems.contains(id)
-            view.unread = unreadItems.contains(id)
+    @discardableResult
+    public func applyRowPresentation(_ update: (inout RowPresentation) -> Void) -> Set<String> {
+        let before = paintedRowPresentation
+        update(&rowPresentation)
+        let after = rowPresentation
+        paintedRowPresentation = after
+        let icons = Set(before.favicons.keys).union(after.favicons.keys).filter { before.favicons[$0] !== after.favicons[$0] }
+        var changed = before.crashedItems.symmetricDifference(after.crashedItems)
+        changed.formUnion(before.unreadItems.symmetricDifference(after.unreadItems))
+        changed.formUnion(icons)
+        if before.rowStates != after.rowStates {
+            let states = Set(before.rowStates.keys).union(after.rowStates.keys)
+            changed.formUnion(states.filter { before.rowStates[$0] != after.rowStates[$0] })
         }
-        for tile in favoriteTiles.values { applyFavoriteStatus(tile) }
+        if workCountsForCheck != nil, rowViews.count + favoriteTiles.count > 1,
+           rowViews.keys.allSatisfy(changed.contains), favoriteTiles.keys.allSatisfy(changed.contains) {
+            workCountsForCheck?.statusSweeps += 1
+        }
+        for id in changed {
+            if let view = rowViews[id] { applyPresentation(view) }
+            if let tile = favoriteTiles[id] { applyFavoriteStatus(tile) }
+            if let owner = splitOwners[id], let view = rowViews[owner] { applyPanePresentation(view, id: id) }
+        }
+        if let copy = dragCopyView {
+            if changed.contains(copy.row.id) { applyPresentation(copy) }
+            for id in copy.paneIDs where changed.contains(id) { applyPanePresentation(copy, id: id) }
+        }
+        return icons
+    }
+
+    private func applyPresentation(_ view: SidebarRowView) {
+        let id = view.row.id
+        let presentation = paintedRowPresentation
+        view.updatePresentation(status: presentation.rowStates[id], favicon: presentation.favicons[id],
+                                crashed: presentation.crashedItems.contains(id), unread: presentation.unreadItems.contains(id))
+    }
+
+    private func applyPanePresentation(_ view: SidebarRowView, id: String) {
+        view.updatePanePresentation(id: id, favicon: paintedRowPresentation.favicons[id],
+                                    crashed: paintedRowPresentation.crashedItems.contains(id))
     }
 
     private func applyFavoriteStatus(_ tile: FavoriteTile) {
         let id = tile.row.id
-        tile.updateStatus(favicon: favicons[id], status: rowStates[id], unread: unreadItems.contains(id))
+        let presentation = paintedRowPresentation
+        tile.updateStatus(favicon: presentation.favicons[id], status: presentation.rowStates[id],
+                          unread: presentation.unreadItems.contains(id))
     }
 
     // The row the core says is a folder's empty line is drawn by its own view, so the rows
     // stack needs that view instead of a SidebarRowView.
-    private func listView(for row: Row) -> NSView {
-        row.kind == .noTabs ? noTabsView(for: row) : rowView(for: row)
+    private func listView(for row: Row, pinned: Bool) -> NSView {
+        row.kind == .noTabs ? noTabsView(for: row) : rowView(for: row, pinned: pinned)
     }
 
     private func removeRow(id: String) {
@@ -1994,6 +2135,8 @@ public final class SidebarView: NSView {
     }
 
     private func arrange(_ views: [NSView], in stack: NSStackView) {
+        guard stack.arrangedSubviews != views else { return }
+        if stack === rows { workCountsForCheck?.rowOrderChanges += 1 }
         for (index, view) in views.enumerated() {
             if index >= stack.arrangedSubviews.count || stack.arrangedSubviews[index] !== view {
                 stack.insertArrangedSubview(view, at: index)
@@ -2007,9 +2150,10 @@ public final class SidebarView: NSView {
             performEdit(.collapse(id: row.id, collapsed: !row.collapsed))
             return
         }
+        let previous = renderContext
         snapshot.selectedId = row.id
         selectedID = Self.sidebarSelection(snapshot)
-        reload()
+        renderSidebar(previous: previous)
         revealSelection()
         onSelect?(row)
     }
@@ -2393,28 +2537,58 @@ public final class SidebarView: NSView {
     @discardableResult
     func prebuildScrollPages() -> Bool {
         guard !isScrollPreview, window != nil, !showingScrollPages else { return false }
-        let indices = Set((spaceIndex - 1...spaceIndex + 1).filter { snapshot.spaces.indices.contains($0) })
-        preparedScrollPreviews = preparedScrollPreviews.filter { indices.contains($0.key) }
+        let anchor = min(max(0, scrollPageIndex), max(0, snapshot.spaces.count - 1))
+        let indices = (anchor - 1...anchor + 1).filter { snapshot.spaces.indices.contains($0) }
+        let reachable = Set(indices.map { snapshot.spaces[$0].id })
+        preparedScrollPreviews = preparedScrollPreviews.filter { reachable.contains($0.key) }
         var prepared = false
         let frame = spaceViewport.convert(bounds, from: self)
-        for index in indices.sorted() {
-            let cached = preparedScrollPreviews[index]
-            let reload = cached.map { $0.snapshot != snapshot || $0.spaceIndex != index || $0.selectedID != selectedID } ?? true
-            if reload || cached?.frame != frame {
-                if prepared { return true }
-                prepared = true
-            }
-            let preview = cached ?? SidebarView(snapshot: snapshot, favoriteIconText: favoriteIconText)
-            preview.isScrollPreview = true
-            preview.snapshot = snapshot
-            preview.selectedID = selectedID
-            preview.spaceListOrigins = spaceListOrigins
-            preview.frame = spaceViewport.convert(bounds, from: self)
-            if reload { preview.showSpace(at: index, animatedReveal: false, notify: false) }
+        for index in indices {
+            let space = snapshot.spaces[index]
+            let focused = previewFocus(in: space)
+            let cached = preparedScrollPreviews[space.id]
+            guard cached?.snapshotSpace != space || cached?.spaceIndex != index || cached?.snapshot.selectedId != focused ||
+                    cached?.frame != frame || cached?.newTabRowShown != newTabRowShown else { continue }
+            if prepared { return true }
+            prepared = true
+            let preview = scrollPreview(cached, index: index, focused: focused, frame: frame)
             preview.layoutSubtreeIfNeeded()
-            preparedScrollPreviews[index] = preview
+            preparedScrollPreviews[space.id] = preview
         }
         return false
+    }
+
+    private func previewFocus(in space: SpaceSnapshot) -> String? {
+        guard let id = snapshot.selectedId else { return nil }
+        return (space.favorites + space.pinned + space.today).contains { $0.id == id } ? id : nil
+    }
+
+    private func scrollPreview(_ cached: SidebarView?, index: Int, focused: String?, frame: NSRect) -> SidebarView {
+        let space = snapshot.spaces[index]
+        var pageSnapshot = snapshot
+        pageSnapshot.shownSpaceId = space.id
+        pageSnapshot.selectedId = focused
+        let preview: SidebarView
+        if let cached {
+            preview = cached
+            let previous = preview.renderContext
+            preview.snapshot = pageSnapshot
+            preview.spaceIndex = index
+            preview.selectedID = focused == nil ? nil : selectedID
+            preview.focusedPane = focused == nil ? nil : focusedPane
+            if previous.space != space || previous.snapshot.selectedId != focused || previous.selection != preview.selectedID {
+                traceSpaceWheelMotion("preview-refresh", detail: "index=\(index)")
+                preview.renderSidebar(previous: previous)
+            }
+        } else {
+            preview = SidebarView(snapshot: pageSnapshot, favoriteIconText: favoriteIconText, previewIndex: index)
+            preview.focusedPane = focused == nil ? nil : focusedPane
+        }
+        preview.updateURLField(URLFieldContent(url: preview.selectedURL, hasTab: preview.selectedID != nil), force: false)
+        preview.newTabRowShown = newTabRowShown
+        preview.frame = frame
+        preview.applyRowPresentation { $0 = rowPresentation }
+        return preview
     }
 
     private func prepareScrollPages(offset: Double, departingIndex: Int? = nil) {
@@ -2430,39 +2604,31 @@ public final class SidebarView: NSView {
             tooltip.capture(in: library)
         }
         if (libraryOpen && offset < 0) || (createSpaceOpen && offset > 0) { mainColumn.isHidden = false }
-        let center = min(snapshot.spaces.count - 1, max(0, spaceIndex - Int((offset / spacePagePitch).rounded())))
+        let center = min(snapshot.spaces.count - 1, max(0, scrollPageIndex - Int((offset / spacePagePitch).rounded())))
         let indices = Set((center - 1...center + 1).filter { snapshot.spaces.indices.contains($0) && $0 != spaceIndex })
         guard !showingScrollPages || Set(scrollPreviews.map(\.spaceIndex)) != indices else { return }
         showingScrollPages = true
         layoutSubtreeIfNeeded()
-        for preview in scrollPreviews where !indices.contains(preview.spaceIndex) { preview.superview?.removeFromSuperview() }
+        for preview in scrollPreviews where !indices.contains(preview.spaceIndex) { detachScrollPreview(preview) }
         scrollPreviews.removeAll { !indices.contains($0.spaceIndex) }
         for index in indices.sorted() {
             guard !scrollPreviews.contains(where: { $0.spaceIndex == index }) else { continue }
             traceSpaceWheelMotion("preview-row-rebuild", detail: "index=\(index)")
-            let prepared = preparedScrollPreviews.removeValue(forKey: index)
-            let preview = prepared ?? SidebarView(snapshot: snapshot, favoriteIconText: favoriteIconText)
+            let space = snapshot.spaces[index]
+            let prepared = preparedScrollPreviews.removeValue(forKey: space.id)
             traceSpaceWheelMotion("preview-source", detail: prepared == nil ? "cold" : "prepared")
-            let reload = prepared == nil || preview.snapshot != snapshot || preview.spaceIndex != index || preview.selectedID != selectedID
-            preview.isScrollPreview = true
-            preview.snapshot = snapshot
-            preview.spaceListOrigins = spaceListOrigins
-            preview.selectedID = selectedID
-            if reload { preview.showSpace(at: index, animatedReveal: false, notify: false) }
-            preview.rowStates = rowStates
-            preview.favicons = favicons
-            preview.unreadItems = unreadItems
+            let preview = scrollPreview(prepared, index: index, focused: previewFocus(in: space),
+                                        frame: spaceViewport.convert(bounds, from: self))
             preview.wantsLayer = true
             preview.setAccessibilityHidden(true)
             let page = NSView(frame: spaceViewport.bounds)
             page.wantsLayer = true
             page.layer?.masksToBounds = true
             page.setAccessibilityHidden(true)
-            preview.frame = spaceViewport.convert(bounds, from: self)
             page.addSubview(preview)
             spaceViewport.addSubview(page, positioned: .below, relativeTo: spaceColumn)
             preview.layoutSubtreeIfNeeded()
-            preview.listScroll.move(to: spaceListOrigins[snapshot.spaces[index].id] ?? 0)
+            preview.listScroll.move(to: spaceListOrigins[space.id] ?? 0)
             if index != departingIndex { preview.revealSelection(animated: false) }
             var descendants = preview.subviews
             while let view = descendants.popLast() {
@@ -2649,11 +2815,7 @@ public final class SidebarView: NSView {
             removeSpaceScrollAnimation(view)
             view.layer?.transform = CATransform3DIdentity
         }
-        for preview in scrollPreviews {
-            preparedScrollPreviews[preview.spaceIndex] = preview
-            preview.superview?.removeFromSuperview()
-            preview.removeFromSuperview()
-        }
+        for preview in scrollPreviews { detachScrollPreview(preview) }
         scrollPreviews.removeAll()
         showingScrollPages = false
         library.isHidden = !libraryOpen
@@ -2676,6 +2838,12 @@ public final class SidebarView: NSView {
             }
         }
         scheduleScrollPrebuild()
+    }
+
+    private func detachScrollPreview(_ preview: SidebarView) {
+        if let id = preview.snapshotSpace?.id { preparedScrollPreviews[id] = preview }
+        preview.superview?.removeFromSuperview()
+        preview.removeFromSuperview()
     }
 
     private func stopPullAnimation() {
@@ -2854,9 +3022,10 @@ extension SidebarView {
             addSubview(copy)
             // A dragged split draws the same segments as its row does (the U20 board's split row).
             if state.row.kind == .split {
-                copy.updateSegments(paneRows(of: state.row.id), active: snapshot.selectedId, crashed: crashedItems)
+                copy.updateSegments(paneRows(of: state.row.id), active: snapshot.selectedId, crashed: paintedRowPresentation.crashedItems)
+                for id in copy.paneIDs { applyPanePresentation(copy, id: id) }
             }
-            copy.updateFavicons(favicons)
+            applyPresentation(copy)
             dragCopyView = copy
             rowViews[state.row.id]?.dragSource = true
             listScroll.stopReveal()

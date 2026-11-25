@@ -22,6 +22,8 @@ private final class MenuFixture {
         _ = try store.importArcSidebar(windowId: "menus", json: String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8), windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil).snapshot
         _ = try store.createSpace(windowId: "menus", name: "Other", spaceId: "other")
         try store.showSpace(windowId: "menus", spaceId: "space-work")
+        _ = try store.liveOpen(item: "tab-spec", url: "https://docs.example.com/spec")
+        _ = try store.liveOpen(item: "tab-mail", url: "https://mail.example.com/")
         _ = NSApplication.shared
         sidebar = SidebarView(snapshot: store.snapshot(windowId: "menus"))
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 700), styleMask: [], backing: .buffered, defer: false)

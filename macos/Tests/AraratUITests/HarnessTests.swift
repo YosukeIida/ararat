@@ -250,7 +250,7 @@ func harnessCloseUsesTheShownSpaceWithoutPagingBackThroughHistory() throws {
     let fixture = directory.appendingPathComponent("sidebar.json")
     try json.write(to: fixture, atomically: true, encoding: .utf8)
     let run = try runHarness(in: directory, arguments: [fixture.path], commands:
-        "select tab-mail\nspace 1\nselect tab-a\nselect tab-b\nclose tab-b\nstate\nclose tab-a\nstate\nclose tab-spec\nstate\n")
+        "select tab-mail\nspace 1\nselect tab-spec\nselect tab-a\nselect tab-b\nclose tab-b\nstate\nclose tab-a\nstate\nclose tab-spec\nstate\n")
     #expect(run.status == 0, "\(run.error)")
     #expect(run.diagnostics.isEmpty)
     #expect(run.output.split(separator: "\n").filter { $0.hasPrefix("state ") }.map(String.init) == [
@@ -369,12 +369,12 @@ func harnessValidatedCommandsKeepTheirRepliesAndFreeTextArguments() throws {
     let directory = try testTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let run = try runHarness(in: directory, commands:
-        "\twidth \t\nreset-width\nsidebar\ntoggle-sidebar\nlibrary\nlibrary close\narchive-search \t\narchive-search Mixed query words\nspace 0000\nselect tab-mail\nclose tab-spec\nrestore tab-spec\narchive-delete missing\ncreate-space   Project  Notes   \n")
+        "\twidth \t\nreset-width\nsidebar\ntoggle-sidebar\nlibrary\nlibrary close\narchive-search \t\narchive-search Mixed query words\nspace 0000\nselect tab-spec\nselect tab-mail\nclose tab-spec\nrestore tab-spec\narchive-delete missing\ncreate-space   Project  Notes   \n")
     #expect(run.status == 0, "\(run.error)")
     #expect(run.runningBeforeStop)
     let lines = run.output.split(separator: "\n").map(String.init)
-    #expect(Array(lines.prefix(11)) == ["ok 240", "ok 240", "ok docked", "ok floating", "ok library", "ok library close",
-        "ok archive-search count 0", "ok archive-search count 0", "ok space 0", "ok select tab-mail", "ok close tab-spec"])
+    #expect(Array(lines.prefix(12)) == ["ok 240", "ok 240", "ok docked", "ok floating", "ok library", "ok library close",
+        "ok archive-search count 0", "ok archive-search count 0", "ok space 0", "ok select tab-spec", "ok select tab-mail", "ok close tab-spec"])
     #expect(lines.contains { $0.hasPrefix("error restore tab-spec:") })
     #expect(lines.contains { $0.hasPrefix("error archive-delete missing:") })
     #expect(lines.contains("ok create-space Project  Notes"))

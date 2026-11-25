@@ -16,6 +16,7 @@ private final class MatrixFakeTab: NSObject {
     @objc dynamic var networkError = 0
     @objc dynamic var url = "about:blank"
     @objc dynamic var title = ""
+    @objc var favicon: NSImage? { nil }
     @objc dynamic var navigationCount: UInt = 0
     @objc var passwordOffer: ARPasswordOfferState { ARPasswordOfferState() }
     var thumbnailVisible = true
@@ -92,6 +93,8 @@ private final class MatrixFakeHost: NSObject {
     @objc func close() { closeRequests += 1 }
     @objc func activeItemId() -> String? { active }
     @objc func tabs() -> [Any] { entries }
+    @objc(faviconForPageURL:profileDirectory:completion:)
+    func favicon(_ url: String, profile: String, completion: @escaping (NSImage?) -> Void) -> Bool { false }
     @objc func checkCreateIncognito() { incognitoOpens += 1 }
     @objc func setWorkspacePageHidden(_ value: Bool) { hidden = value }
     @objc func refreshWorkspaceWindowTitle() {}

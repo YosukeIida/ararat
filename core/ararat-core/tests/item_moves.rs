@@ -1,6 +1,8 @@
-use ararat_core::{import::arc_sidebar, model::{Kind, Lifecycle, Op, Record, Workspace}, storage::Store};
+mod fixtures;
+
+use ararat_core::{model::{Kind, Lifecycle, Op, Record, Workspace}, storage::Store};
 fn workspace() -> Workspace {
-    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0;
+    let mut ws = fixtures::arc_workspace_with_open_tabs();
     ws.spaces[1].profile = ararat_core::model::Profile::Default;
     ws
 }

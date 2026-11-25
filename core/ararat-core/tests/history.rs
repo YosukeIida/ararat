@@ -1,8 +1,9 @@
-use ararat_core::import::arc_sidebar;
+mod fixtures;
+
 use ararat_core::model::{Item, ItemKind, Lifecycle, Membership, Op, Record, Workspace};
 
 fn workspace() -> Workspace {
-    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0;
+    let mut ws = fixtures::arc_workspace_with_open_tabs();
     for i in 0..61 {
         let id = format!("y{i}");
         ws.items.insert(id.clone(), Item {

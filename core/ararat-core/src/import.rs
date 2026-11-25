@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use crate::model::{Appearance, Hlc, Id, Item, ItemKind, Look, LookColor, Membership, Orientation, Profile, Space, Workspace};
+use crate::model::{Appearance, Hlc, Id, Item, ItemKind, Lifecycle, Look, LookColor, Membership, Orientation, Profile, Space, Workspace};
 use crate::order::key_between;
 use crate::routing::{Destination, MatchStyle, Rule, Routing, SpaceTarget, UrlCondition};
 
@@ -393,6 +393,7 @@ fn item(id: String, obj: &Value, order: String) -> Result<Option<Item>> {
         },
         _ => return Ok(None),
     };
+    let lifecycle = if matches!(kind, ItemKind::Tab { .. }) { Lifecycle::Unloaded } else { Lifecycle::Open };
     Ok(Some(Item {
         membership: Membership {
             parent: obj["parentID"].as_str().map(str::to_string),
@@ -402,7 +403,7 @@ fn item(id: String, obj: &Value, order: String) -> Result<Option<Item>> {
         },
         title: obj["title"].as_str().map(str::to_string),
         kind,
-        lifecycle: crate::model::Lifecycle::Open, lifecycle_changed_at: 0, archive: None,
+        lifecycle, lifecycle_changed_at: 0, archive: None,
         id,
     }))
 }

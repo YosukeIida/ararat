@@ -203,10 +203,16 @@ func splitSegmentsUseSharedFaviconsAndFallBackToTheGlobe() throws {
     #expect(site.iconView.subviews.isEmpty)
 
     let favicon = NSImage(size: NSSize(width: 16, height: 16))
-    sidebar.favicons["site"] = favicon
+    sidebar.applyRowPresentation { $0.favicons["site"] = favicon }
     #expect(site.iconView.image === favicon)
     #expect(descendants(of: sidebar).contains { $0 === site })
-    sidebar.favicons.removeAll()
+    sidebar.applyRowPresentation { $0.crashedItems.insert("site") }
+    #expect(site.preferredOpacity == SidebarMetrics.unloadedOpacity)
+    #expect(site.iconView.image !== favicon)
+    #expect(blank.iconView.image?.symbolConfiguration == globe.symbolConfiguration)
+    sidebar.applyRowPresentation { $0.crashedItems.removeAll() }
+    #expect(site.iconView.image === favicon)
+    sidebar.applyRowPresentation { $0.favicons.removeAll() }
     #expect(site.iconView.image?.symbolConfiguration == globe.symbolConfiguration)
 }
 

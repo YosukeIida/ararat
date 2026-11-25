@@ -132,7 +132,7 @@ fn concurrent_item_puts_into_deleted_roots_repair_into_the_first_surviving_today
             for op in ops { replica.apply(op); }
             replica.repair_tree(); replica.check_tree().unwrap();
             assert_eq!(replica.items["tab-mail"].membership.parent.as_deref(), Some("today-home"));
-            assert_eq!(replica.items["tab-mail"].lifecycle, Lifecycle::Open);
+            assert_eq!(replica.items["tab-mail"].lifecycle, Lifecycle::Unloaded);
             assert!(replica.outline("today-home").iter().any(|(_, item)| item.id == "tab-mail"));
             assert!(replica.repair_tree().is_empty());
         }

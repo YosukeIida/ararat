@@ -47,7 +47,7 @@ func crashedRowsDrawTheWarningGlyphAtFortyFivePercent() throws {
     let space = u25Space(today: [u25Row("a"), u25Row("b")])
     let (window, sidebar) = u25Sidebar(space)
     defer { window.contentView = nil }
-    sidebar.crashedItems = ["a"]
+    sidebar.applyRowPresentation { $0.crashedItems = ["a"] }
     func row(_ id: String) throws -> SidebarRowView {
         try #require(u25Descendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == id })
     }
@@ -71,10 +71,10 @@ func unreadRowsShowTheDotUntilTheyAreShown() throws {
         try #require(u25Descendants(sidebar).compactMap { $0 as? SidebarRowView }.first { $0.row.id == id })
     }
     #expect(!(try row("a")).unreadDotVisible)
-    sidebar.unreadItems = ["a"]
+    sidebar.applyRowPresentation { $0.unreadItems = ["a"] }
     #expect((try row("a")).unreadDotVisible)
     #expect(!(try row("b")).unreadDotVisible)
-    sidebar.unreadItems = []
+    sidebar.applyRowPresentation { $0.unreadItems = [] }
     #expect(!(try row("a")).unreadDotVisible)
 }
 
@@ -452,6 +452,7 @@ func anUnloadedPinsCloseArchivesItThroughTheRowsAction(animate: Bool) async thro
     let json = #"{"sidebar":{"containers":[{}, {"spaces":["work", {"id":"work","title":"Work","profile":{"default":true},"containerIDs":["pinned","pin","unpinned","today"]}],"items":["pin",{"id":"pin","parentID":null,"childrenIds":["p"],"data":{"itemContainer":{}}},"p",{"id":"p","parentID":"pin","childrenIds":[],"data":{"tab":{"savedURL":"https://p.example"}}},"today",{"id":"today","parentID":null,"childrenIds":["a"],"data":{"itemContainer":{}}},"a",{"id":"a","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://a.example"}}}]}]}}"#
     _ = try store.importArcSidebar(windowId: "archive", json: json, windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil)
     try store.showSpace(windowId: "archive", spaceId: "work")
+    _ = try store.selectItem(windowId: "archive", id: "p")
     let before = try #require(store.snapshot(windowId: "archive").spaces.first { $0.id == "work" })
     let pin = try #require(before.pinned.first { $0.id == "p" })
     #expect(!rowCloseArchives(pin, in: before))
