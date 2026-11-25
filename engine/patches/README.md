@@ -80,7 +80,7 @@ is in `docs/research/ungoogled-inventory.md` §8.
 
 ## Notes on our patches
 
-`ararat/native-editor-ime.patch` keeps Chromium's direct Eisu/Kana delivery only for `RenderWidgetHostViewCocoa`; for other first responders, it offers the keyDown to a view responder’s input context only when `TISCreateInputSourceList` finds at least one enabled `kTISTypeKeyboardInputMode` (filtered by type with `includeAllInstalled = false`), including while ABC is selected, then returns regardless of whether it handled the event. Otherwise it drops the key without calling the input context. Neither path forwards to keyDown or the window. This preserves the IME path while preventing a U.S.-only input context from inserting a raw control character.
+`ararat/native-editor-ime.patch` keeps Chromium's direct Eisu/Kana delivery to the key window for `RenderWidgetHostViewCocoa`. For other first responders, it uses AppKit's `[super sendEvent:event]` path when `TISCreateInputSourceList` finds an enabled `kTISTypeKeyboardInputMode` (`includeAllInstalled = false`). This includes ABC selection while an input mode is enabled. An empty or null list causes the patch to drop the keyDown because a U.S.-only input context can insert U+0010. Switching input sources on a physical JIS keyboard remains unverified.
 
 `ararat/sad-tab-viewless.patch` returns without installing a stock sad-tab view when a hosted window has no `BrowserView`. Ardia (`mantrakp04/ardia`, GPL-3.0) has the same guard in `engine/ardiacore/apply.sh`. This patch was written independently against Chromium's source.
 

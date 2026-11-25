@@ -18,9 +18,9 @@
 +        bool has_input_mode = sources && CFArrayGetCount(sources) > 0;
 +        if (sources)
 +          CFRelease(sources);
-+        if (has_input_mode && [responder isKindOfClass:[NSView class]])
-+          [[(NSView*)responder inputContext] handleEvent:event];
-+        // Why not always offer the key: a US-only input context can insert C0.
++        // Why not always use AppKit dispatch: US-only input can insert U+0010.
++        if (has_input_mode)
++          [super sendEvent:event];
 +        return;
 +      }
 +
