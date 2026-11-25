@@ -705,6 +705,27 @@ func idlePrebuildKeepsPreviewConstructionOffTheWheelSwitch(prebuild: Bool) async
 }
 
 @Test @MainActor
+func preparedWheelPagesRefreshOnlyTheChangedNeighbour() async throws {
+    let (window, sidebar) = scrollTestWindow(spaces: 4)
+    defer { window.contentView = nil }
+    sidebar.showSpaceWithoutNotification(id: "space-2")
+    while sidebar.prebuildScrollPages() {}
+    let trace = SpaceWheelMotionTrace()
+    sidebar.wheelMotionTrace = trace
+    var reply = scrollTestSnapshot(spaces: 4)
+    reply.spaces[0].pinned[0].title = "Offscreen update"
+    reply.spaces[3].pinned[0].title = "Neighbour update"
+    sidebar.update(snapshot: reply)
+    sidebar.scrollWheel(with: trackpadEvent(dx: 2, phase: nil, time: 100))
+    let previews = trace.marks.filter { $0["name"] as? String == "preview-source" }
+    let refreshed = trace.marks.filter { $0["name"] as? String == "preview-refresh" }
+    #expect(previews.compactMap { $0["detail"] as? String } == ["prepared", "prepared"])
+    #expect(refreshed.compactMap { $0["detail"] as? String } == ["index=3"])
+    try await waitUntil { sidebar.lookSampling != nil }
+    trace.finish("one-neighbour-refresh")
+}
+
+@Test @MainActor
 func interruptingASpringAppliesThePendingSnapshotBeforeResolvingTheTargetSpace() throws {
     let (window, sidebar) = scrollTestWindow()
     defer { window.contentView = nil }

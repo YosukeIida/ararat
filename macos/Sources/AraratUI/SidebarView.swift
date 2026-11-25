@@ -348,7 +348,7 @@ public final class SidebarView: NSView {
     private var scrollAxis: ScrollAxis?
     private weak var gestureScroll: NSScrollView?
     private var scrollPreviews: [SidebarView] = []
-    private var preparedScrollPreviews: [Int: SidebarView] = [:]
+    private var preparedScrollPreviews: [String: SidebarView] = [:]
     private var scrollPrebuildScheduled = false
     private var deferredScrollSnapshots: [(SidebarView) -> Void] = []
     private var scrollSnapshotDrainScheduled = false
@@ -395,16 +395,21 @@ public final class SidebarView: NSView {
         momentumQuietTimer = nil
     }
     private var scrollGeneration = 0
-    private var isScrollPreview = false
+    private let isScrollPreview: Bool
     private let favoriteIconText: (String) -> String?
     private var laidOutSidebarWidth: CGFloat = 0
     private var spacePagePitch: Double { Double(bounds.width) }
 
-    public init(snapshot: WorkspaceSnapshot, favoriteIconText: @escaping (String) -> String? = { _ in nil }) {
+    public convenience init(snapshot: WorkspaceSnapshot, favoriteIconText: @escaping (String) -> String? = { _ in nil }) {
+        self.init(snapshot: snapshot, favoriteIconText: favoriteIconText, previewIndex: nil)
+    }
+
+    private init(snapshot: WorkspaceSnapshot, favoriteIconText: @escaping (String) -> String?, previewIndex: Int?) {
         self.snapshot = snapshot
         self.favoriteIconText = favoriteIconText
+        self.isScrollPreview = previewIndex != nil
         self.selectedID = Self.sidebarSelection(snapshot)
-        self.spaceIndex = snapshot.spaces.firstIndex { $0.id == snapshot.shownSpaceId } ?? 0
+        self.spaceIndex = previewIndex ?? snapshot.spaces.firstIndex { $0.id == snapshot.shownSpaceId } ?? 0
         super.init(frame: .zero)
         build()
         reload()
@@ -2513,28 +2518,58 @@ public final class SidebarView: NSView {
     @discardableResult
     func prebuildScrollPages() -> Bool {
         guard !isScrollPreview, window != nil, !showingScrollPages else { return false }
-        let indices = Set((spaceIndex - 1...spaceIndex + 1).filter { snapshot.spaces.indices.contains($0) })
-        preparedScrollPreviews = preparedScrollPreviews.filter { indices.contains($0.key) }
+        let anchor = min(max(0, scrollPageIndex), max(0, snapshot.spaces.count - 1))
+        let indices = (anchor - 1...anchor + 1).filter { snapshot.spaces.indices.contains($0) }
+        let reachable = Set(indices.map { snapshot.spaces[$0].id })
+        preparedScrollPreviews = preparedScrollPreviews.filter { reachable.contains($0.key) }
         var prepared = false
         let frame = spaceViewport.convert(bounds, from: self)
-        for index in indices.sorted() {
-            let cached = preparedScrollPreviews[index]
-            let reload = cached.map { $0.snapshot != snapshot || $0.spaceIndex != index || $0.selectedID != selectedID } ?? true
-            if reload || cached?.frame != frame {
-                if prepared { return true }
-                prepared = true
-            }
-            let preview = cached ?? SidebarView(snapshot: snapshot, favoriteIconText: favoriteIconText)
-            preview.isScrollPreview = true
-            preview.snapshot = snapshot
-            preview.selectedID = selectedID
-            preview.spaceListOrigins = spaceListOrigins
-            preview.frame = spaceViewport.convert(bounds, from: self)
-            if reload { preview.showSpace(at: index, animatedReveal: false, notify: false) }
+        for index in indices {
+            let space = snapshot.spaces[index]
+            let focused = previewFocus(in: space)
+            let cached = preparedScrollPreviews[space.id]
+            guard cached?.snapshotSpace != space || cached?.spaceIndex != index || cached?.snapshot.selectedId != focused ||
+                    cached?.frame != frame || cached?.newTabRowShown != newTabRowShown else { continue }
+            if prepared { return true }
+            prepared = true
+            let preview = scrollPreview(cached, index: index, focused: focused, frame: frame)
             preview.layoutSubtreeIfNeeded()
-            preparedScrollPreviews[index] = preview
+            preparedScrollPreviews[space.id] = preview
         }
         return false
+    }
+
+    private func previewFocus(in space: SpaceSnapshot) -> String? {
+        guard let id = snapshot.selectedId else { return nil }
+        return (space.favorites + space.pinned + space.today).contains { $0.id == id } ? id : nil
+    }
+
+    private func scrollPreview(_ cached: SidebarView?, index: Int, focused: String?, frame: NSRect) -> SidebarView {
+        let space = snapshot.spaces[index]
+        var pageSnapshot = snapshot
+        pageSnapshot.shownSpaceId = space.id
+        pageSnapshot.selectedId = focused
+        let preview: SidebarView
+        if let cached {
+            preview = cached
+            let previous = preview.renderContext
+            preview.snapshot = pageSnapshot
+            preview.spaceIndex = index
+            preview.selectedID = focused == nil ? nil : selectedID
+            preview.focusedPane = focused == nil ? nil : focusedPane
+            if previous.space != space || previous.snapshot.selectedId != focused || previous.selection != preview.selectedID {
+                traceSpaceWheelMotion("preview-refresh", detail: "index=\(index)")
+                preview.renderSidebar(previous: previous)
+            }
+        } else {
+            preview = SidebarView(snapshot: pageSnapshot, favoriteIconText: favoriteIconText, previewIndex: index)
+            preview.focusedPane = focused == nil ? nil : focusedPane
+        }
+        preview.updateURLField(URLFieldContent(url: preview.selectedURL, hasTab: preview.selectedID != nil), force: false)
+        preview.newTabRowShown = newTabRowShown
+        preview.frame = frame
+        preview.applyRowPresentation { $0 = rowPresentation }
+        return preview
     }
 
     private func prepareScrollPages(offset: Double, departingIndex: Int? = nil) {
@@ -2550,37 +2585,31 @@ public final class SidebarView: NSView {
             tooltip.capture(in: library)
         }
         if (libraryOpen && offset < 0) || (createSpaceOpen && offset > 0) { mainColumn.isHidden = false }
-        let center = min(snapshot.spaces.count - 1, max(0, spaceIndex - Int((offset / spacePagePitch).rounded())))
+        let center = min(snapshot.spaces.count - 1, max(0, scrollPageIndex - Int((offset / spacePagePitch).rounded())))
         let indices = Set((center - 1...center + 1).filter { snapshot.spaces.indices.contains($0) && $0 != spaceIndex })
         guard !showingScrollPages || Set(scrollPreviews.map(\.spaceIndex)) != indices else { return }
         showingScrollPages = true
         layoutSubtreeIfNeeded()
-        for preview in scrollPreviews where !indices.contains(preview.spaceIndex) { preview.superview?.removeFromSuperview() }
+        for preview in scrollPreviews where !indices.contains(preview.spaceIndex) { detachScrollPreview(preview) }
         scrollPreviews.removeAll { !indices.contains($0.spaceIndex) }
         for index in indices.sorted() {
             guard !scrollPreviews.contains(where: { $0.spaceIndex == index }) else { continue }
             traceSpaceWheelMotion("preview-row-rebuild", detail: "index=\(index)")
-            let prepared = preparedScrollPreviews.removeValue(forKey: index)
-            let preview = prepared ?? SidebarView(snapshot: snapshot, favoriteIconText: favoriteIconText)
+            let space = snapshot.spaces[index]
+            let prepared = preparedScrollPreviews.removeValue(forKey: space.id)
             traceSpaceWheelMotion("preview-source", detail: prepared == nil ? "cold" : "prepared")
-            let reload = prepared == nil || preview.snapshot != snapshot || preview.spaceIndex != index || preview.selectedID != selectedID
-            preview.isScrollPreview = true
-            preview.snapshot = snapshot
-            preview.spaceListOrigins = spaceListOrigins
-            preview.selectedID = selectedID
-            if reload { preview.showSpace(at: index, animatedReveal: false, notify: false) }
-            preview.applyRowPresentation { $0 = rowPresentation }
+            let preview = scrollPreview(prepared, index: index, focused: previewFocus(in: space),
+                                        frame: spaceViewport.convert(bounds, from: self))
             preview.wantsLayer = true
             preview.setAccessibilityHidden(true)
             let page = NSView(frame: spaceViewport.bounds)
             page.wantsLayer = true
             page.layer?.masksToBounds = true
             page.setAccessibilityHidden(true)
-            preview.frame = spaceViewport.convert(bounds, from: self)
             page.addSubview(preview)
             spaceViewport.addSubview(page, positioned: .below, relativeTo: spaceColumn)
             preview.layoutSubtreeIfNeeded()
-            preview.listScroll.move(to: spaceListOrigins[snapshot.spaces[index].id] ?? 0)
+            preview.listScroll.move(to: spaceListOrigins[space.id] ?? 0)
             if index != departingIndex { preview.revealSelection(animated: false) }
             var descendants = preview.subviews
             while let view = descendants.popLast() {
@@ -2767,11 +2796,7 @@ public final class SidebarView: NSView {
             removeSpaceScrollAnimation(view)
             view.layer?.transform = CATransform3DIdentity
         }
-        for preview in scrollPreviews {
-            preparedScrollPreviews[preview.spaceIndex] = preview
-            preview.superview?.removeFromSuperview()
-            preview.removeFromSuperview()
-        }
+        for preview in scrollPreviews { detachScrollPreview(preview) }
         scrollPreviews.removeAll()
         showingScrollPages = false
         library.isHidden = !libraryOpen
@@ -2794,6 +2819,12 @@ public final class SidebarView: NSView {
             }
         }
         scheduleScrollPrebuild()
+    }
+
+    private func detachScrollPreview(_ preview: SidebarView) {
+        if let id = preview.snapshotSpace?.id { preparedScrollPreviews[id] = preview }
+        preview.superview?.removeFromSuperview()
+        preview.removeFromSuperview()
     }
 
     private func stopPullAnimation() {
