@@ -27,6 +27,6 @@ The seats run on orca-agent-team (one Orca tab per role) from a Codex session in
 - Reuse another open-source project's code only where its license allows it in this GPL-3.0 repository. Every file that reuses it keeps that project's copyright and license, states the changes, and that project's LICENSE and NOTICE go under `third_party/<project>/` and are bundled with the app.
 - A project's names, logos, app icons and separately licensed assets are never copied.
 - Arc and Dia are closed source. Use only published analyses and static analysis within their terms, and never their code or assets.
-- Where Arc has not been measured, the value Ararat uses and the reason for it are recorded in the design notes.
+- Behaviour values follow Arc's measurements. Where Arc has not been measured, the value Ararat uses and the reason for it are recorded in the design notes.
 - Research notes, including which projects were compared and under which licenses, live in `docs/research/`.
 - Analyse with REA (`morluto/rea`) from a clone of its repository, not the npm package (`npx rea-agents`). Keep node inside the devshell.
