@@ -243,7 +243,7 @@ func wheelOpensLibraryLikeTrackpadAndPausesBeforeRailReturn() async throws {
         container.layoutSubtreeIfNeeded()
         let trackpadWidth = sidebar.bounds.width
         let trackpadState = container.sidebarState
-        #expect(sidebar.libraryOpen && trackpadWidth == 402)
+        #expect(sidebar.libraryOpen && trackpadWidth == SidebarMetrics.libraryWidth)
         sidebar.setLibraryOpen(false)
         try await waitUntil {
             descendants(sidebar).allSatisfy { $0.layer?.animation(forKey: "space.scroll") == nil }

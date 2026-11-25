@@ -27,10 +27,15 @@ final class DockScreenCheck {
     var neighbourProfile = ""
     var settingsSpaceID = ""
     var settingsWaited = 0
+    // libwidth: the user's own sidebar width, read before the Library opens, and the ticks spent
+    // revealing the floating sidebar at the window's left edge.
+    var userWidth: CGFloat = 0
+    var floatTicks = 0
+    var floatBase: TimeInterval = 0
     var details: [String: Any] = [:]
 
     static func conditionNames(screen: Bool) -> [String] {
-        ["seed", "cells", "wheel_input", "wheel_start", "wheel_settled", "favorites_before", "favorites_mid", "favorites_after", "library_open", "library_closed", "menu", "new_folder", "refused", "escape", "drop_refused", "drop_duration", "tint_initial", "minimum_docked", "minimum_hidden", "delete_space_sheet", "delete_space_count", "delete_space_shown", "delete_space_profile", "space_settings_page"] + (screen ? ["tint_inactive", "tint_active", "wheel_mid", "capture_cells", "capture_mid", "capture_refused", "capture_delete_space", "capture_space_settings"] : ["follow_mid"])
+        ["seed", "cells", "wheel_input", "wheel_start", "wheel_settled", "favorites_before", "favorites_mid", "favorites_after", "library_open", "library_closed", "menu", "new_folder", "refused", "escape", "drop_refused", "drop_duration", "tint_initial", "minimum_docked", "minimum_hidden", "delete_space_sheet", "delete_space_count", "delete_space_shown", "delete_space_profile", "space_settings_page", "library_own_width", "library_user_width_kept", "library_closed_width", "library_floating_width"] + (screen ? ["tint_inactive", "tint_active", "wheel_mid", "capture_cells", "capture_mid", "capture_refused", "capture_delete_space", "capture_space_settings", "capture_library_docked", "capture_library_closed", "capture_library_floating"] : ["follow_mid"])
     }
     static func conditionResults(_ conditions: [String: Bool], screen: Bool) -> (values: [String: Bool], failed: [String]) {
         let names = conditionNames(screen: screen)
@@ -204,6 +209,7 @@ extension Runtime {
             }
             let firstTiles = check.favoritePages["default"] ?? []
             let nextTiles = check.favoritePages["dock-0"] ?? []
+            check.userWidth = container.resizeHandle.sidebarWidth
             check.report("favorites_before", firstTiles.count == 1 && nextTiles.count == 1 && firstTiles.isDisjoint(with: nextTiles)
                          && sidebar.dockCheckFavoritePages["default"] == firstTiles)
             let widths = dock.subviews.map { $0.frame.width }
@@ -429,6 +435,67 @@ extension Runtime {
             settings?.window?.performClose(nil)
             browserCheckPhase = 9
         case 9:
+            // The dock's own work is done. The Library's widths and their captures follow on
+            // phases 20 and up so the phases above keep their numbers and their traces.
+            browserCheckPhase = 20
+        case 20:
+            // Pinned: a docked sidebar with the Library closed, then the Library opens at its own
+            // width. Floating is phase 23.
+            guard !container.sidebarAnimating else { return }
+            guard container.sidebarState == "docked" else {
+                FileHandle.standardError.write(Data("ararat-trace: dock library sidebar=\(container.sidebarState)\n".utf8))
+                container.toggleSidebar()
+                return
+            }
+            guard !sidebar.libraryOpen else { sidebar.setLibraryOpen(false); return }
+            sidebar.setLibraryOpen(true)
+            browserCheckPhase = 21
+        case 21:
+            guard !container.sidebarAnimating, sidebar.libraryOpen else { return }
+            // libwidth: the Library takes its own measured width, not the user's 240 pt sidebar.
+            let width = sidebar.bounds.width
+            let arc = SidebarContainerView.libraryWidthsForCheck
+            check.report("library_own_width", width == arc.library)
+            check.details["library"] = ["user": check.userWidth, "docked": width,
+                                        "rail": arc.rail, "list": width - arc.rail - arc.divider]
+            if screen { check.report("capture_library_docked", capture("library-docked")) }
+            sidebar.setLibraryOpen(false)
+            browserCheckPhase = 22
+        case 22:
+            guard !container.sidebarAnimating, !sidebar.libraryOpen else { return }
+            check.report("library_closed_width", abs(sidebar.bounds.width - check.userWidth) < 0.01)
+            if screen { check.report("capture_library_closed", capture("library-closed")) }
+            sidebar.setLibraryOpen(true)
+            browserCheckPhase = 23
+        case 23:
+            // Floating: hide the sidebar and reveal it at the window's left edge, as the owner's
+            // pointer does, with the Library still open. A window with no selection toggles
+            // straight to floating, so both answers are accepted.
+            guard !container.sidebarAnimating, sidebar.libraryOpen else { return }
+            if container.sidebarState == "docked" {
+                FileHandle.standardError.write(Data("ararat-trace: dock library hide for floating\n".utf8))
+                container.toggleSidebar()
+                return
+            }
+            if container.sidebarState == "hidden" {
+                if check.floatBase == 0 { check.floatBase = ProcessInfo.processInfo.systemUptime }
+                check.floatTicks += 1
+                container.checkSamplePointer(at: NSPoint(x: window.frame.minX + 2, y: window.frame.midY),
+                                             now: check.floatBase + Double(check.floatTicks) * 0.2)
+                return
+            }
+            guard container.sidebarState == "floating" else { return }
+            check.report("library_floating_width", sidebar.bounds.width == SidebarContainerView.libraryWidthsForCheck.library)
+            var library = check.details["library"] as? [String: Any] ?? [:]
+            library["floating"] = sidebar.bounds.width
+            check.details["library"] = library
+            if screen { check.report("capture_library_floating", capture("library-floating")) }
+            sidebar.setLibraryOpen(false)
+            browserCheckPhase = 24
+        case 24:
+            guard !container.sidebarAnimating, !sidebar.libraryOpen else { return }
+            // The Library never writes the user's width: it is the same after both closes.
+            check.report("library_user_width_kept", abs(container.resizeHandle.sidebarWidth - check.userWidth) < 0.01)
             let result = DockScreenCheck.conditionResults(check.conditions, screen: screen)
             let values = dockCheckDiagnostics(screen: screen)
             check.stop()
