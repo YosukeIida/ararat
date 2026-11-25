@@ -10,6 +10,7 @@ func sidebarMenuControlsExistAtPublicInteractionPoints() throws {
     let store = try WorkspaceStore.open(path: directory.appendingPathComponent("base.sqlite").path)
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     _ = try store.importArcSidebar(windowId: "regression", json: String(contentsOf: root.appendingPathComponent("core/ararat-core/tests/fixtures/arc-sidebar-synthetic.json"), encoding: .utf8), windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil).snapshot
+    _ = try store.liveOpen(item: "tab-spec", url: "https://docs.example.com/spec")
     _ = try store.moveItem(windowId: "regression", id: "tab-a", container: "today-work", index: 0, openFolder: false)
     let snapshot = try store.createTab(windowId: "regression", url: "https://today.example")
     let today = try #require(snapshot.selectedId)

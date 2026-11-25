@@ -1,3 +1,5 @@
+mod fixtures;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
@@ -255,7 +257,7 @@ fn killed_process_keeps_every_flushed_batch() {
 fn selection_time_and_window_selection_stay_local() {
     let path = fresh_db("local-selection");
     let (store, _) = Store::open(&path).unwrap();
-    let mut ws = imported(); store.write(ws.to_ops()); store.flush().unwrap();
+    let mut ws = fixtures::arc_workspace_with_open_tabs(); store.write(ws.to_ops()); store.flush().unwrap();
     let conn = Connection::open(&path).unwrap();
     let journal_count = || conn.query_row("SELECT count(*) FROM journal", [], |r| r.get::<_, i64>(0)).unwrap();
     let before = journal_count();

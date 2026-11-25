@@ -2,9 +2,20 @@
 //! the owner's real `StorableSidebar.json` (Arc 1.171) without error.
 
 use ararat_core::import::arc_sidebar;
-use ararat_core::model::{ItemKind, Orientation, Profile};
+use ararat_core::model::{ItemKind, Lifecycle, Orientation, Profile};
 
 const FIXTURE: &str = include_str!("fixtures/arc-sidebar-synthetic.json");
+
+#[test]
+fn imported_tabs_start_unloaded() {
+    let (workspace, _) = arc_sidebar(FIXTURE, None, None, None, None).unwrap();
+    for id in ["tab-mail", "tab-spec", "tab-a", "tab-b"] {
+        assert_eq!(workspace.items[id].lifecycle, Lifecycle::Unloaded, "{id}");
+    }
+    for id in ["pin-work", "folder-docs", "split-1"] {
+        assert_eq!(workspace.items[id].lifecycle, Lifecycle::Open, "{id}");
+    }
+}
 
 #[test]
 fn the_report_counts_only_what_the_import_produced() {
@@ -269,7 +280,6 @@ fn last_selected_dates_only_seed_tabs() {
 
 #[test]
 fn first_window_seeds_local_state_and_auto_archive_uses_imported_dates() {
-    use ararat_core::{import::arc_sidebar, model::Lifecycle};
     let json = fixture_with(|c| {
         let items = c["items"].as_array_mut().unwrap();
         for id in ["tab-a", "tab-b", "tab-spec"] {
@@ -291,8 +301,8 @@ fn first_window_seeds_local_state_and_auto_archive_uses_imported_dates() {
     assert!(!ws.last_selected.contains_key("easel-1"));
     ws.auto_archive(1_678_393_600_000).unwrap();
     assert_eq!(ws.items["tab-a"].lifecycle, Lifecycle::Archived);
-    assert_eq!(ws.items["tab-b"].lifecycle, Lifecycle::Open);
-    assert_eq!(ws.items["tab-spec"].lifecycle, Lifecycle::Open);
+    assert_eq!(ws.items["tab-b"].lifecycle, Lifecycle::Unloaded);
+    assert_eq!(ws.items["tab-spec"].lifecycle, Lifecycle::Unloaded);
     assert_eq!(ws.last_selected["tab-spec"], 1_678_393_600_000);
     let mut windows: serde_json::Value = serde_json::from_str(WINDOWS).unwrap();
     windows["windows"].as_array_mut().unwrap().reverse();

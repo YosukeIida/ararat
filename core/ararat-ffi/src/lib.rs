@@ -225,10 +225,18 @@ impl WorkspaceStore {
         self.admit(true)?;
         let (mut imported, report) = import::arc_sidebar(&json, windows_json.as_deref(), key_bindings_json.as_deref(), link_routing_json.as_deref(), owner_profile.map(Into::into)).map_err(|e| CoreError::Import { message: e.0 })?;
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-        for item in imported.items.values().filter(|item| matches!(item.kind, ItemKind::Tab { .. })) {
-            imported.last_selected.entry(item.id.clone()).or_insert(now);
-        }
         let mut workspace = self.workspace.lock().unwrap();
+        let live = self.live.lock().unwrap();
+        for item in imported.items.values_mut().filter(|item| matches!(item.kind, ItemKind::Tab { .. })) {
+            imported.last_selected.entry(item.id.clone()).or_insert(now);
+            if let Some(current) = workspace.items.get(&item.id).filter(|current| current.lifecycle == Lifecycle::Open)
+                && live.live_tab(&item.id).is_some()
+            {
+                item.lifecycle = Lifecycle::Open;
+                item.lifecycle_changed_at = current.lifecycle_changed_at;
+            }
+        }
+        drop(live);
         // The routing rides the same batch through to_ops(): an import without the sibling
         // file keeps the workspace's default routing state (it emits no routing records), so
         // the Air Traffic Control rules survive.

@@ -1,7 +1,9 @@
-use ararat_core::{import::arc_sidebar, model::{Lifecycle, Op, Record}, storage::Store};
+mod fixtures;
+
+use ararat_core::{model::{Lifecycle, Op, Record}, storage::Store};
 
 fn workspace() -> ararat_core::model::Workspace {
-    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0;
+    let mut ws = fixtures::arc_workspace_with_open_tabs();
     for id in ["tab-a", "tab-b"] { ws.items.get_mut(id).unwrap().membership.parent = Some("today-work".into()); }
     ws
 }
@@ -177,7 +179,7 @@ fn restoring_in_a_collapsed_folder_expands_ancestors_in_the_replayed_transaction
 }
 
 fn split_workspace() -> ararat_core::model::Workspace {
-    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0;
+    let mut ws = fixtures::arc_workspace_with_open_tabs();
     ws.move_item("split-1", "today-work", 0, false).unwrap();
     ws
 }

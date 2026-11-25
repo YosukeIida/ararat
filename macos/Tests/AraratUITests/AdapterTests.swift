@@ -135,6 +135,7 @@ func twoQueuedCommandWRequestsArchiveTodayInSuccessorOrder() async throws {
     let adapter = WorkspaceAdapter(windowID: "test-window")
     let json = #"{"sidebar":{"containers":[{}, {"spaces":["work", {"id":"work","title":"Work","profile":{"default":true},"containerIDs":["pinned","pin","unpinned","today"]}],"items":["pin",{"id":"pin","parentID":null,"childrenIds":[],"data":{"itemContainer":{}}},"today",{"id":"today","parentID":null,"childrenIds":["a","b","c"],"data":{"itemContainer":{}}},"a",{"id":"a","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://a.example"}}},"b",{"id":"b","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://b.example"}}},"c",{"id":"c","parentID":"today","childrenIds":[],"data":{"tab":{"savedURL":"https://c.example"}}}]}]}}"#
     _ = try await adapterValue { adapter.open(path: path, json: { json }, windowsJSON: { nil }, keyBindingsJSON: { nil }, linkRoutingJSON: { nil }, completion: $0) }
+    for id in ["c", "b"] { _ = try await adapterValue { adapter.select(id: id, completion: $0) } }
     let selected = try await adapterValue { adapter.select(id: "a", completion: $0) }
     _ = NSApplication.shared
     let sidebar = SidebarView(snapshot: selected)

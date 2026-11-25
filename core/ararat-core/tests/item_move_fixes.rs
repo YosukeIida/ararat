@@ -1,6 +1,8 @@
+mod fixtures;
+
 use ararat_core::{import::arc_sidebar, model::{Lifecycle, Op, Profile, Record, Workspace}};
 fn workspace() -> Workspace {
-    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0;
+    let mut ws = fixtures::arc_workspace_with_open_tabs();
     ws.spaces[1].profile = Profile::Default;
     ws
 }
@@ -70,7 +72,7 @@ fn selecting_a_hidden_tab_expands_ancestors_locally_and_replays() {
 }
 #[test]
 fn cross_profile_moves_and_wraps_are_atomic_errors() {
-    let mut ws = arc_sidebar(include_str!("fixtures/arc-sidebar-synthetic.json"), None, None, None, None).unwrap().0;
+    let mut ws = fixtures::arc_workspace_with_open_tabs();
     let mut home = ws.items["tab-mail"].clone(); home.id = "home-tab".into(); home.membership.parent = Some("pin-home".into()); ws.apply(&Op::Put(Record::Item(home)));
     let before = ws.clone();
     for (id, target) in [("tab-spec", "pin-home"), ("tab-spec", "today-home"), ("home-tab", "space-work:favorites"), ("folder-docs", "pin-home"), ("split-1", "pin-home")] {
