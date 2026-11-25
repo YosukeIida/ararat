@@ -2023,7 +2023,7 @@ public final class SidebarView: NSView {
             view.update(row: row, selected: selected)
         }
         let panes = row.kind == .split ? paneRows(of: row.id) : []
-        let rebuilt = view.updateSegments(panes, active: snapshot.selectedId, crashed: rowPresentation.crashedItems)
+        let rebuilt = view.updateSegments(panes, active: snapshot.selectedId, crashed: paintedRowPresentation.crashedItems)
         for pane in panes {
             splitOwners[pane.id] = row.id
             if rebuilt { applyPanePresentation(view, id: pane.id) }
@@ -2077,18 +2077,21 @@ public final class SidebarView: NSView {
 
     private func applyPresentation(_ view: SidebarRowView) {
         let id = view.row.id
-        view.updatePresentation(status: rowPresentation.rowStates[id], favicon: rowPresentation.favicons[id],
-                                crashed: rowPresentation.crashedItems.contains(id), unread: rowPresentation.unreadItems.contains(id))
+        let presentation = paintedRowPresentation
+        view.updatePresentation(status: presentation.rowStates[id], favicon: presentation.favicons[id],
+                                crashed: presentation.crashedItems.contains(id), unread: presentation.unreadItems.contains(id))
     }
 
     private func applyPanePresentation(_ view: SidebarRowView, id: String) {
-        view.updatePanePresentation(id: id, favicon: rowPresentation.favicons[id], crashed: rowPresentation.crashedItems.contains(id))
+        view.updatePanePresentation(id: id, favicon: paintedRowPresentation.favicons[id],
+                                    crashed: paintedRowPresentation.crashedItems.contains(id))
     }
 
     private func applyFavoriteStatus(_ tile: FavoriteTile) {
         let id = tile.row.id
-        tile.updateStatus(favicon: rowPresentation.favicons[id], status: rowPresentation.rowStates[id],
-                          unread: rowPresentation.unreadItems.contains(id))
+        let presentation = paintedRowPresentation
+        tile.updateStatus(favicon: presentation.favicons[id], status: presentation.rowStates[id],
+                          unread: presentation.unreadItems.contains(id))
     }
 
     // The row the core says is a folder's empty line is drawn by its own view, so the rows
@@ -3019,7 +3022,7 @@ extension SidebarView {
             addSubview(copy)
             // A dragged split draws the same segments as its row does (the U20 board's split row).
             if state.row.kind == .split {
-                copy.updateSegments(paneRows(of: state.row.id), active: snapshot.selectedId, crashed: rowPresentation.crashedItems)
+                copy.updateSegments(paneRows(of: state.row.id), active: snapshot.selectedId, crashed: paintedRowPresentation.crashedItems)
                 for id in copy.paneIDs { applyPanePresentation(copy, id: id) }
             }
             applyPresentation(copy)

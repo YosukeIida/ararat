@@ -1980,7 +1980,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
       sidebar?.focusedPane = (id, url)
     } else { sidebar?.focusedPane = nil }
     if let sidebar {
-      stageSidebarRowPresentation(sidebar)
+      scheduleSidebarRowPresentation()
       sidebar.update(snapshot: snapshot)
     }
   }
@@ -2788,14 +2788,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
 
   private var sidebarRowPresentationScheduled = false
 
-  private func stageSidebarRowPresentation(_ sidebar: SidebarView) {
-    sidebar.stageRowPresentation(rowStates: adapter?.rowStates ?? [:],
-                                 crashedItems: adapter?.crashedItems ?? [], unreadItems: unread.unread)
-  }
-
   func scheduleSidebarRowPresentation() {
     guard let sidebar else { return }
-    stageSidebarRowPresentation(sidebar)
+    sidebar.stageRowPresentation(rowStates: adapter?.rowStates ?? [:],
+                                 crashedItems: adapter?.crashedItems ?? [], unreadItems: unread.unread)
     guard !sidebarRowPresentationScheduled else { return }
     sidebarRowPresentationScheduled = true
     RunLoop.main.perform(inModes: [.common, .modalPanel]) { [weak self, weak sidebar] in

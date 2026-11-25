@@ -98,6 +98,27 @@ func favoriteTileDrawsSharedFaviconAndLiveMarks() throws {
 }
 
 @Test @MainActor
+func snapshotDuringStagingKeepsTheLastPaintedLoadingAndUnreadMarks() {
+    let row = Row(folderHasTabs: false, parentId: "", siblingIndex: 0, collapsed: false, id: "item",
+                  title: "Item", url: nil, depth: 0, kind: .tab, unloaded: false, lastSelectedAt: nil)
+    let space = SpaceSnapshot(pinnedCount: 1, todayCount: 0, profileKey: "default", pinnedId: "", todayId: "",
+                              favoritesId: nil, archiveAfter: .hours12, profileName: "Default", profile: .default,
+                              id: "work", title: "Work", icon: nil, look: nil, favorites: [], pinned: [row], today: [])
+    var snapshot = WorkspaceSnapshot(archive: [], shownSpaceId: space.id, selectedId: nil, spaces: [space])
+    let sidebar = SidebarView(snapshot: snapshot)
+    sidebar.stageRowPresentation(
+        rowStates: [row.id: .init(loading: true, audible: false, muted: false, canGoBack: false, canGoForward: false)],
+        crashedItems: [], unreadItems: [row.id])
+    snapshot.spaces[0].pinned[0].title = "Renamed"
+    sidebar.update(snapshot: snapshot)
+    sidebar.stageRowPresentation(rowStates: [:], crashedItems: [], unreadItems: [])
+    sidebar.applyRowPresentation { _ in }
+
+    #expect(sidebar.rowCheckInfo(id: row.id)?.loading == false)
+    #expect(sidebar.rowCheckInfo(id: row.id)?.unreadDot == false)
+}
+
+@Test @MainActor
 func faviconDrawingUsesSixteenPointsWithEitherBitmapDensity() throws {
     func bitmap(_ pixels: Int) throws -> NSBitmapImageRep {
         try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels,
