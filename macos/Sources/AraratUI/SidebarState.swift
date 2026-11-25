@@ -18,7 +18,9 @@ enum SidebarMetrics {
     static let createSpaceSpinnerSize: CGFloat = 14
     static let createSpaceSpinnerGap: CGFloat = 7
     static let createSpacePlusTrailing: CGFloat = 10
-    static let libraryWidthIncrease: CGFloat = 70
+    // Arc, measured from the Library's own screenshot (see architecture §7): the rail is 112 pt,
+    // the divider 1 pt and the list 304 pt, and the page starts right of the list.
+    static let libraryWidth = archiveRailContentWidth + archiveRailDividerWidth + archiveListWidth
     static let libraryButtonSize: CGFloat = 32
     static let libraryIconSize: CGFloat = 16
     static let libraryButtonLeading: CGFloat = 9

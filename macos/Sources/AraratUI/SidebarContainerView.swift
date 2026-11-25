@@ -324,7 +324,7 @@ public final class SidebarContainerView: NSView {
                 self.state.toggle()
             }
             self.render(scroll ? .spaceSwitch : open ? .dockShow : .dockHide) {
-                self.resizeHandle.widthExtension = open ? SidebarMetrics.libraryWidthIncrease : 0
+                self.resizeHandle.libraryWidth = open ? SidebarMetrics.libraryWidth : nil
             }
         }
         sidebar.onLookChanged = { [weak self] from, to, fraction in
@@ -353,6 +353,16 @@ public final class SidebarContainerView: NSView {
             self.updateMonitoring()
             return true
         }
+        resizeHandle.widthLimit = { [weak self] in self?.sidebarWidthLimit }
+    }
+
+    /// The Library keeps its 417 pt unless the window is too narrow for it and the page's own
+    /// minimum (240 pt, §7): then the list gives up the difference. Floating, the panel only has
+    /// to stay inside the window's inset.
+    private var sidebarWidthLimit: CGFloat {
+        state.mode == .docked
+            ? max(0, bounds.width - SidebarMetrics.cardInset - Self.minimumPageWidth)
+            : max(0, bounds.width - SidebarMetrics.floatingInset * 2)
     }
 
     @available(*, unavailable)
@@ -557,6 +567,7 @@ public final class SidebarContainerView: NSView {
             return
         }
         panel.isHidden = false
+        resizeHandle.applyWidthLimit()
         let width = resizeHandle.displayedWidth
         let docked = state.mode == .docked
         let floating = state.mode == .floating
@@ -591,9 +602,12 @@ public final class SidebarContainerView: NSView {
 
     /// Docked, the card starts at the sidebar's edge and ends at the card inset; hidden or floating, it sits at
     /// the card inset on both sides, so the sidebar's own width does not count (architecture §7).
+    /// While the Library is open the minimum follows the user's own width: the Library's width
+    /// gives way to it (the list clamps) rather than growing the window.
     private var minimumWindowWidth: CGFloat {
-        state.mode == .docked
-            ? resizeHandle.displayedWidth + SidebarMetrics.cardInset + Self.minimumPageWidth
+        let sidebarWidth = resizeHandle.libraryWidth == nil ? resizeHandle.displayedWidth : resizeHandle.sidebarWidth
+        return state.mode == .docked
+            ? sidebarWidth + SidebarMetrics.cardInset + Self.minimumPageWidth
             : Self.minimumPageWidth + SidebarMetrics.cardInset * 2
     }
 
