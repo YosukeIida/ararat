@@ -75,6 +75,39 @@ func floatingLibraryWidensThePanelInsideTheWindow() throws {
     #expect(sidebar.frame.width == 380 - SidebarMetrics.floatingInset * 2)
 }
 
+@Test @MainActor
+func libraryOpenIgnoresWidthDragsAndAccessibilityChanges() throws {
+    let (sidebar, container) = widthFixture()
+    let handle = container.resizeHandle
+    #expect(handle.accessibilityPerformIncrement())
+    #expect(handle.sidebarWidth == SidebarMetrics.defaultWidth + 1)
+    handle.sidebarWidth = SidebarMetrics.defaultWidth
+    sidebar.setLibraryOpen(true)
+    container.layoutSubtreeIfNeeded()
+    #expect(sidebar.frame.width == SidebarMetrics.libraryWidth)
+    // The Library's edge does not resize the user's sidebar: no accessibility step either.
+    #expect(!handle.accessibilityPerformIncrement())
+    #expect(!handle.accessibilityPerformDecrement())
+    let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 420, y: 300), modifierFlags: [], timestamp: 0,
+                                               windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    let drag = try #require(NSEvent.mouseEvent(with: .leftMouseDragged, location: NSPoint(x: 620, y: 300), modifierFlags: [], timestamp: 1,
+                                               windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+    handle.mouseDown(with: down)
+    handle.mouseDragged(with: drag)
+    #expect(handle.sidebarWidth == SidebarMetrics.defaultWidth)
+    #expect(handle.displayedWidth == SidebarMetrics.libraryWidth)
+    #expect(container.savedPresentation.sidebarWidth.map { CGFloat($0) } == SidebarMetrics.defaultWidth)
+    sidebar.setLibraryOpen(false)
+    container.layoutSubtreeIfNeeded()
+    #expect(sidebar.frame.width == SidebarMetrics.defaultWidth)
+    #expect(handle.sidebarWidth == SidebarMetrics.defaultWidth)
+    #expect(container.savedPresentation.sidebarWidth.map { CGFloat($0) } == SidebarMetrics.defaultWidth)
+    // Closed, the same handle resizes again.
+    handle.mouseDown(with: down)
+    handle.mouseDragged(with: drag)
+    #expect(handle.sidebarWidth == SidebarMetrics.defaultWidth + 200)
+}
+
 @MainActor
 private func libraryDescendants(_ view: NSView) -> [NSView] {
     view.subviews.flatMap { [$0] + libraryDescendants($0) }

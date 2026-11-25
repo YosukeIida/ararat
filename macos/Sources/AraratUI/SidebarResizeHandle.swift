@@ -46,6 +46,8 @@ public final class SidebarResizeHandle: NSView {
     private func applyWidth() {
         widthConstraint.constant = displayedWidth
         onWidthChanged?()
+        // The Library takes the cursor away with the drag; the handle itself has not moved.
+        window?.invalidateCursorRects(for: self)
         window?.contentView?.layoutSubtreeIfNeeded()
     }
 
@@ -63,6 +65,8 @@ public final class SidebarResizeHandle: NSView {
     public func resetWidth() { sidebarWidth = SidebarMetrics.defaultWidth }
 
     override public func resetCursorRects() {
+        // The Library sets its own width, so there is nothing here to drag while it is open.
+        guard libraryWidth == nil else { return }
         addCursorRect(bounds, cursor: .resizeLeftRight)
     }
 
@@ -73,11 +77,26 @@ public final class SidebarResizeHandle: NSView {
     }
 
     override public func mouseDragged(with event: NSEvent) {
+        // Why not resize the Library: its width is Arc's, not the user's, so a drag here would
+        // only write a width nothing shows and the close would jump to it. The drag still
+        // collapses the sidebar as before.
+        guard libraryWidth == nil else {
+            collapsedDuringDrag = onDrag?(event.locationInWindow.x) == true
+            return
+        }
         guard !collapsedDuringDrag else { return }
         if onDrag?(event.locationInWindow.x) == true { collapsedDuringDrag = true; return }
         sidebarWidth = dragStartWidth + event.locationInWindow.x - dragStartX
     }
 
-    override public func accessibilityPerformIncrement() -> Bool { sidebarWidth += 1; return true }
-    override public func accessibilityPerformDecrement() -> Bool { sidebarWidth -= 1; return true }
+    override public func accessibilityPerformIncrement() -> Bool {
+        guard libraryWidth == nil else { return false }
+        sidebarWidth += 1
+        return true
+    }
+    override public func accessibilityPerformDecrement() -> Bool {
+        guard libraryWidth == nil else { return false }
+        sidebarWidth -= 1
+        return true
+    }
 }
