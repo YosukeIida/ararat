@@ -1,11 +1,8 @@
 import AppKit
 import AraratKit
 
-/// The command bar's NSTextField with Chrome/Arc-style inline completion, adapted from Cra's
-/// MIT `Sources/Cra/UI/CommandBar/CommandTextField.swift`: the completed suffix is inserted
-/// selected, so typing replaces it and Backspace removes it without re-completing. The
-/// completion itself comes from the core with each query. While the field has marked text
-/// (IME), editing keys go to the input method, never to the bar (ours; Cra lacks it).
+/// The command bar's NSTextField, adapted from Cra's MIT
+/// `Sources/Cra/UI/CommandBar/CommandTextField.swift`.
 @MainActor
 public final class CommandTextField {
     let controller: CommandBarController
@@ -35,7 +32,11 @@ public final class CommandTextField {
 
     private static func makeField(controller: CommandBarController, coordinator: Coordinator) -> NSTextField {
         let field = NSTextField()
-        field.cell = CommandFieldCell(textCell: controller.fieldText)
+        let cell = CommandFieldCell(textCell: controller.fieldText)
+        cell.editor.onMarkedTextChange = { [weak coordinator] text in
+            coordinator?.editorTextDidChange(text)
+        }
+        field.cell = cell
         // A fresh NSTextFieldCell is neither editable nor selectable; `NSTextField(string:)`,
         // which this replaced, set both, and the bar's field must take first responder and type.
         field.isEditable = true
@@ -96,16 +97,18 @@ public final class CommandTextField {
         }
 
         func controlTextDidChange(_ obj: Notification) {
-            guard !suppressChange, let field else { return }
-            controller.update(query: field.stringValue)
+            guard let field else { return }
+            editorTextDidChange((field.currentEditor() as? NSTextView)?.string ?? field.stringValue)
+        }
+
+        func editorTextDidChange(_ text: String) {
+            guard !suppressChange, controller.isOpen,
+                  controller.previewText != nil || !controller.query.utf16.elementsEqual(text.utf16) else { return }
+            controller.update(query: text)
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            if (textView.hasMarkedText() || (textView as? CommandFieldEditor)?.wasMarkedBeforeKeyDown == true) && (selector == #selector(NSResponder.insertNewline(_:))
-                || selector == #selector(NSResponder.moveUp(_:)) || selector == #selector(NSResponder.moveDown(_:))
-                || selector == #selector(NSResponder.cancelOperation(_:))) {
-                return false
-            }
+            if CommandFieldEditor.isCompositionCommand(selector, in: textView) { return false }
             switch selector {
             case #selector(NSResponder.moveDown(_:)):
                 controller.moveSelection(by: 1); return true
@@ -131,7 +134,7 @@ public final class CommandTextField {
 
 @MainActor
 final class CommandFieldCell: NSTextFieldCell {
-    private let editor = CommandFieldEditor()
+    let editor = CommandFieldEditor()
 
     override func fieldEditor(for controlView: NSView) -> NSTextView? {
         editor.isFieldEditor = true
@@ -141,7 +144,13 @@ final class CommandFieldCell: NSTextFieldCell {
 
 @MainActor
 final class CommandFieldEditor: NSTextView {
+    var onMarkedTextChange: ((String) -> Void)?
     var wasMarkedBeforeKeyDown = false
+
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        onMarkedTextChange?(self.string)
+    }
 
     override func keyDown(with event: NSEvent) {
         wasMarkedBeforeKeyDown = hasMarkedText()
@@ -150,9 +159,20 @@ final class CommandFieldEditor: NSTextView {
     }
 
     override func doCommand(by selector: Selector) {
-        // The input method can clear the mark before forwarding the same Return.
-        if wasMarkedBeforeKeyDown && selector == #selector(NSResponder.insertNewline(_:)) { return }
+        if Self.isCompositionCommand(selector, in: self) { return }
         super.doCommand(by: selector)
+    }
+
+    static func isCompositionCommand(_ selector: Selector, in editor: NSTextView) -> Bool {
+        // The input method can clear the mark before forwarding a command from the same key.
+        guard editor.hasMarkedText() || (editor as? CommandFieldEditor)?.wasMarkedBeforeKeyDown == true else { return false }
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.moveUp(_:)),
+             #selector(NSResponder.moveDown(_:)), #selector(NSResponder.cancelOperation(_:)):
+            return true
+        default:
+            return false
+        }
     }
 
     override func readSelection(from pasteboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
