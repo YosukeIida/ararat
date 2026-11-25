@@ -1,6 +1,6 @@
 # Ararat
 
-A macOS browser with Arc's workflow and Yab's vertical tabs, built on Chromium. The UI is Swift (AppKit). The engine is a Chromium fork with our own layer built inside the tree, the way Dia does it with ArcCore and Ardia with ArdiaCore. The cross-platform core is Rust. Windows, Linux and iPhone come later, but the structure assumes them from the start. The design is in `docs/architecture.md`.
+A macOS browser with Arc's workflow, built on Chromium. The UI is Swift (AppKit). The engine is a Chromium fork with Ararat's own layer built inside the tree. The cross-platform core is Rust. Windows, Linux and iPhone come later, but the structure assumes them from the start. The design is in `docs/architecture.md`.
 
 ## Language
 
@@ -22,11 +22,11 @@ Measurement and design-stage work (research notes, `docs/architecture.md`) needs
 
 The seats run on orca-agent-team (one Orca tab per role) from a Codex session inside Orca, or on herdr-agent-team from one inside herdr. Agents get the devshell from dotfiles' agent-switch shims, which load direnv when `claude` or `codex` starts in the repo. If `command -v cargo` does not point into `/nix/store`, restart the agent from the repo instead of building with another toolchain: a second toolchain writes into the same `target/`.
 
-## Prior art
+## Other projects
 
-- Ardia (`mantrakp04/ardia`): a Chromium fork with its own layer. The distributed app is GPL-3.0; Ardia's own source files are Apache-2.0 (its NOTICE). Both may be reused in this GPL-3.0 repo. Keep the source noted in any file that reuses it; for Apache-2.0 code also keep Ardia's copyright, point to `third_party/ardia/LICENSE.Apache-2.0` and state the changes. `third_party/ardia/` holds its LICENSE, LICENSE.Apache-2.0 and NOTICE, which the app bundles.
-- Cra (`VictorKildahl/cra`, MIT): Swift + CEF. Reference for the UI code.
-- Yab (`yetanotherbrowser/yab`, Apache-2.0 since 2026-11-14; clone at `~/workspace/github.com/yetanotherbrowser/yab`): Swift, WebKit by default and Chromium through CEF in a helper process (its `docs/chromium-*.md`). Where both projects build the same thing, compare the two implementations and take the better one; behaviour values still follow Arc's measurements. Where Arc has not been measured, compare Cra's and Yab's values and record the selected value and its reason in the design notes. Apache-2.0 code may be reused in this GPL-3.0 repo: keep Yab's copyright and license and state the changes in each file that reuses it, and carry its NOTICE into ours. Its names, logo and app icons are trademarks, and the Central Icon System icons it ships are licensed separately: never copy them.
-- Arc, Dia: closed source. Use only published analyses and static analysis within what their terms allow. Never copy their code or assets.
-- Research notes live in `docs/research/`.
+- Reuse another open-source project's code only where its license allows it in this GPL-3.0 repository. Every file that reuses it keeps that project's copyright and license, states the changes, and that project's LICENSE and NOTICE go under `third_party/<project>/` and are bundled with the app.
+- A project's names, logos, app icons and separately licensed assets are never copied.
+- Arc and Dia are closed source. Use only published analyses and static analysis within their terms, and never their code or assets.
+- Behaviour values follow Arc's measurements. Where Arc has not been measured, the value Ararat uses and the reason for it are recorded in the design notes.
+- Research notes, including which projects were compared and under which licenses, live in `docs/research/`.
 - Analyse with REA (`morluto/rea`) from a clone of its repository, not the npm package (`npx rea-agents`). Keep node inside the devshell.

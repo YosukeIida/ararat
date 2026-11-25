@@ -3,7 +3,7 @@ import Foundation
 @testable import AraratUI
 
 /// One recorded scroll event, reduced to what the space classifier reads. The source format is
-/// `scrollrec` (docs/research/yab/scrollrec.swift): a millisecond stamp and the CGEvent fields.
+/// `scrollrec` (a research script under `docs/research/`): a millisecond stamp and the CGEvent fields.
 struct SpaceScrollRecordedEvent: Equatable {
     var time: TimeInterval
     /// The fixed-point deltas, axis 2 (horizontal) and axis 1 (vertical): the values

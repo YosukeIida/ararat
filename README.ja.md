@@ -1,6 +1,6 @@
 # Ararat
 
-Arc の操作感と Yab の縦タブを Chromium の上に作る macOS ブラウザ。設計中。
+Arc の操作感を Chromium の上に作る macOS ブラウザ。設計中。
 
 ライセンスは GPL-3.0（`LICENSE`）。
 

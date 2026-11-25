@@ -9,8 +9,8 @@ final class SidebarWindowButtons: NSView {
         didSet { subviews.forEach { $0.needsDisplay = true } }
     }
     /// The minimize button, disabled while the window is in full screen: a full-screen window has
-    /// nothing to minimize, as AppKit's own title bar keeps it disabled there (design,
-    /// 2026-11-16, from Yab's `Lights`; reimplemented).
+    /// nothing to minimize, as AppKit's own title bar keeps it disabled there (design, 2026-11-16;
+    /// reimplemented).
     private weak var minimize: NSButton?
     private var fullScreenObservers: [NSObjectProtocol] = []
 

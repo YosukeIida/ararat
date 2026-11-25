@@ -2,7 +2,7 @@
 
 この文書は `AGENTS.md` の日本語訳である。agent が読むのは英語版で、内容が食い違うときは英語版に従う。
 
-Arc の操作感と Yab の縦タブを Chromium の上に作る macOS ブラウザ。UI は Swift（AppKit）。エンジンは Chromium の fork で、自前の層を tree の中に組み込む（Dia の ArcCore、Ardia の ArdiaCore と同じ方式）。OS をまたぐ中核は Rust。Windows・Linux・iPhone は後で対応するが、構成は最初からそれを前提にする。設計は `docs/architecture.md`。
+Arc の操作感を Chromium の上に作る macOS ブラウザ。UI は Swift（AppKit）。エンジンは Chromium の fork で、自前の層を tree の中に組み込む。OS をまたぐ中核は Rust。Windows・Linux・iPhone は後で対応するが、構成は最初からそれを前提にする。設計は `docs/architecture.md`。
 
 ## 言語
 
@@ -24,11 +24,11 @@ repo の中のファイル（README、AGENTS.md、`docs/` の下すべて、コ�
 
 席は、Orca の中の Codex のセッションからは orca-agent-team（役割ごとに Orca のタブ 1 つ）で、herdr の中のセッションからは herdr-agent-team で動かす。agent は、dotfiles の agent-switch の shim から devshell を得る。shim は、repo で `claude` か `codex` が起動するときに direnv を読み込む。`command -v cargo` が `/nix/store` を指さないときは、別のツールチェーンでビルドせず、repo から agent を起動し直す。2 つ目のツールチェーンは同じ `target/` に書き込むためである。
 
-## 先行実装
+## 他のプロジェクト
 
-- Ardia（`mantrakp04/ardia`）: Chromium の fork と自前の層。配布物のアプリは GPL-3.0、Ardia 自身のソースファイルは Apache-2.0 である（同梱の NOTICE）。どちらもこの GPL-3.0 の repo に流用してよい。流用したファイルには出典を残す。Apache-2.0 のコードは、Ardia の著作権表示を残し、`third_party/ardia/LICENSE.Apache-2.0` を示し、変更点を書く。`third_party/ardia/` には LICENSE・LICENSE.Apache-2.0・NOTICE を置き、アプリに同梱する
-- Cra（`VictorKildahl/cra`、MIT）: Swift + CEF。UI の実装の参考
-- Yab（`yetanotherbrowser/yab`、2026-11-14 から Apache-2.0。clone は `~/workspace/github.com/yetanotherbrowser/yab`）: Swift。既定は WebKit で、Chromium は helper のプロセスの CEF で動かす（`docs/chromium-*.md`）。同じものを両方が作っているときは、2 つの実装を突き合わせて質の良い方を取り込む。動きの値はこれまでどおり Arc の計測に従う。Arc の実測がない項目は Cra と Yab の値を比較し、採用する値とその理由を設計資料に記録する。Apache-2.0 のコードは GPL-3.0 のこの repo に流用してよい。流用したファイルには Yab の著作権表示とライセンスと変更点を残し、Yab の NOTICE をこの repo の notice に引き継ぐ。名前・ロゴ・アプリのアイコンは商標で、同梱の Central Icon System のアイコンは別のライセンスなので、写さない
-- Arc・Dia: 非公開。公開されている解析結果と、規約が許す範囲の静的な解析だけを使う。コードや素材は写さない
-- 調査の記録は `docs/research/`
+- ほかのオープンソースのプロジェクトのコードは、この GPL-3.0 の repo でライセンスが許す場合にだけ流用する。流用したファイルには、そのプロジェクトの著作権表示とライセンスを残して変更点を書き、そのプロジェクトの LICENSE と NOTICE は `third_party/<project>/` に置いてアプリに同梱する
+- プロジェクトの名前・ロゴ・アプリアイコンと、別のライセンスの素材は写さない
+- Arc・Dia は非公開である。公開されている解析結果と、規約が許す範囲の静的な解析だけを使い、コードや素材は写さない
+- 動きの値は Arc の計測に従う。Arc で計測していない値は、Ararat が使う値とその理由を設計資料に記録する
+- 調査の記録は、比較したプロジェクトとそのライセンスも含めて `docs/research/` に置く
 - REA（`morluto/rea`）で解析するときは、npm の配布物（`npx rea-agents`）ではなく、repo を clone して使う。node は devshell に閉じる

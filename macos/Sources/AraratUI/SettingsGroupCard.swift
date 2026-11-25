@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The settings frame's geometry, from Yab's measurements and the boards: cards of radius 12
+/// The settings frame's geometry, from the boards: cards of radius 12
 /// on 10 pt gaps (§7), and the search hit's fill inside a card — the selection grey inset 3 pt
 /// with radius 9, so a hit row reads as pressed inside its card rather than as the card itself
 /// (D7, the board's `.rw.hit`; its rows are at least 48 pt tall, which the 54 pt row already is).

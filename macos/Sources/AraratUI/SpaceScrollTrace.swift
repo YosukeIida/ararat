@@ -2,8 +2,8 @@ import AppKit
 
 /// `--ararat-trace-space-scroll`: one stderr line per wheel event over the sidebar, with the
 /// fields that decide Arc's wheel rule and the classifier's answer, so a gesture captured on the
-/// owner's trackball can be compared with the recordings in docs/research/arc-ardia-observed.md
-/// section 5. Off unless the flag is passed.
+/// owner's trackball can be compared with the recorded gestures under `docs/research/`.
+/// Off unless the flag is passed.
 @MainActor
 enum SpaceScrollTrace {
     static let enabled = CommandLine.arguments.contains("--ararat-trace-space-scroll")

@@ -1377,8 +1377,8 @@ public final class SettingsModel: ObservableObject {
         return keys
     }
 
-    /// Pane search matches the action name, its description and the keys (Yab's manual: "finds shortcuts
-    /// by action or by keys"), combined with the Customized and Conflicting toggles.
+    /// Pane search matches the action name, its description and the keys, combined with the
+    /// Customized and Conflicting toggles.
     static func shortcutHit(_ row: Row, query: String, customized: Bool, conflicting: Bool, customizedOnly: Bool, conflictingOnly: Bool) -> Bool {
         let query = query.trimmingCharacters(in: .whitespaces)
         let matches = query.isEmpty || (row.title + " " + row.subtitle + " " + row.keys.joined()).localizedCaseInsensitiveContains(query)

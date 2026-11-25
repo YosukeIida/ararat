@@ -1,6 +1,6 @@
 # Ararat
 
-A macOS browser that brings Arc's workflow and Yab's vertical tabs to Chromium. In design.
+A macOS browser on Chromium with an Arc-style workflow. In design.
 
 Licensed under GPL-3.0 (`LICENSE`).
 

@@ -40,7 +40,7 @@ enum WindowChrome {
         for (type, target) in zip([NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton],
                                  BrowserWindow.buttonFrames(windowHeight: host.frame.height)) {
             guard let button = window.standardWindowButton(type), let parent = button.superview else { continue }
-            // Cra's MainWindowController: alpha 0 prevents AppKit's keyboard miniaturize path.
+            // Keep the standard buttons at full alpha, hidden while the sidebar's lights stand in.
             button.alphaValue = 1
             button.isHidden = !fullScreen && lights != nil
             if !fullScreen { button.frame = parent.convert(target, from: nil) }

@@ -1,4 +1,4 @@
-// Format from Cra's notes on Arc 1.168–1.170; it read the owner's Arc 1.171 file without error.
+// Format of Arc 1.168–1.170; the importer read the owner's Arc 1.171 file without error.
 // Unmodelled kinds (easel, arcDocument, tabGroup) are skipped rather than rejected, so one
 // easel does not fail a whole import.
 
@@ -464,8 +464,8 @@ fn err(message: &str) -> ImportError {
     ImportError(message.to_string())
 }
 
-// Arc's StorableLinkRouting.json routes links from other apps (Cra LinkRouting.swift: a link
-// is checked against the routes in order, the first match decides, the rest go to the default).
+// Arc's StorableLinkRouting.json routes links from other apps (a link is checked against the
+// routes in order, the first match decides, the rest go to the default).
 // Only two shapes refuse the whole file, like the sidebar import: an unreadable version and a
 // `rules` key that is neither an array nor absent. Everything else is per rule: an unknown
 // style, an unknown or profile destination, a malformed entry or a repeated id drops that one
@@ -566,8 +566,8 @@ pub fn arc_link_routing(json: &str, owner: Option<Profile>, spaces: &[(Id, Profi
 
 enum Skip { UnknownStyle, Malformed }
 
-// One sourceComponent: `componentType.urlMatch` is `{_0: {contains: {}} | {matches: {}}, _1: text}`
-// (Cra Importers.linkRoute). Arc's editor offers only these two styles.
+// One sourceComponent: `componentType.urlMatch` is `{_0: {contains: {}} | {matches: {}}, _1: text}`.
+// Arc's editor offers only these two styles.
 fn url_condition(component: &Value) -> std::result::Result<UrlCondition, Skip> {
     let Some(url_match) = component["componentType"]["urlMatch"].as_object() else {
         return Err(Skip::Malformed);
@@ -589,15 +589,15 @@ enum DestinationOr { Keep(Destination), SkipProfile, SkipUnknown, Absent }
 
 // A ProfileDestination sits in the `_0` slot of a space/littleArc destination: `{"mostRecent": {}}`,
 // `{"profile": ...}` (skipped+counted), or a space id, which may be the string itself or a
-// string anywhere inside (fixture assumption; Cra Importers.linkDestination reads it the same
-// way, "recognised by its id anywhere inside space").
+// string anywhere inside (fixture assumption; a space id is recognised by its id anywhere inside
+// `space`).
 enum Target { MostRecent, Space(Id), Profile, Unknown }
 
 // A ProfileDestination sits in the `_0` slot of a space/littleArc destination: `{"mostRecent": {}}`,
-// `{"profile": ...}` (skipped+counted), or a space id. The id is taken the way Cra's import
-// (`Importers.linkDestination`) reads its one string out of `space` — the string itself, or one
-// nested inside — and `arc_link_routing` then requires it to be exactly a sidebar space id;
-// the fixture assumption is the same `_0` slot the owner's file carries for most-recent.
+// `{"profile": ...}` (skipped+counted), or a space id. The id is taken from `space` as its one
+// string — the string itself, or one nested inside — and `arc_link_routing` then requires it to
+// be exactly a sidebar space id; the fixture assumption is the same `_0` slot the owner's file
+// carries for most-recent.
 fn destination_target(value: Option<&Value>) -> Target {
     let Some(value) = value else { return Target::Unknown };
     if let Some(id) = value.as_str() { return Target::Space(id.into()); }
@@ -611,8 +611,8 @@ fn destination_target(value: Option<&Value>) -> Target {
     Target::Unknown
 }
 
-// A LinkDestination is `space(ProfileDestination)` or `littleArc(ProfileDestination)` (Cra
-// LinkRouting.swift). The profile case cannot be imported: count it and leave the rule out.
+// A LinkDestination is `space(ProfileDestination)` or `littleArc(ProfileDestination)`.
+// The profile case cannot be imported: count it and leave the rule out.
 // `spaces` carries the profile each usable id rides in; `profiled` is whether the file's
 // owner is known — without one, only existence decides.
 fn arc_destination(value: &Value, profile: &Profile, spaces: &HashMap<Id, Profile>, profiled: bool) -> DestinationOr {
@@ -620,7 +620,7 @@ fn arc_destination(value: &Value, profile: &Profile, spaces: &HashMap<Id, Profil
     let Some(map) = value.as_object() else { return DestinationOr::SkipUnknown };
     if let Some(body) = map.get("littleArc") {
         // littleArc ignores the inner target: a Little Arc given a space still opened with
-        // "Open in <most recent space>" (Cra LinkRouting.swift), so everything except a
+        // "Open in <most recent space>", so everything except a
         // profile destination becomes the import's profile in the Little window.
         return match destination_target(body.get("_0")) {
             Target::Profile => DestinationOr::SkipProfile,

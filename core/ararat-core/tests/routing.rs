@@ -236,8 +236,8 @@ fn reopen_and_journal_replay_give_the_same_routing() {
 #[test]
 fn contains_maps_to_match_style_contains() {
     let (routing, _) = imported();
-    // Arc's seeded route is a "contains" rule to the space of most-recent tabs (Cra
-    // LinkRouting.swift googleMeet); Meet.Google.Com keeps its case until matching.
+    // Arc's seeded route is a "contains" rule to the space of most-recent tabs (the
+    // googleMeet route); Meet.Google.Com keeps its case until matching.
     assert_eq!(routing.rules[0], rule("meet", vec![contains("Meet.Google.Com")], most_recent()));
     assert_eq!(routing.route("https://www.meet.google.com/abc", &spaces_view()), space("space-work"));
 }
@@ -491,9 +491,8 @@ fn an_unknown_space_id_is_skipped_and_counted() {
     assert_eq!(routing.default, Routing::default().default);
 }
 
-// The id string must match a known space id exactly, as Cra checks its string against the
-// sidebar's space ids; a near-match (case differences, a title) is not an id and is skipped
-// and counted.
+// The id string must match a known space id exactly, not a title or a case variant; a
+// near-match is not an id and is skipped and counted.
 #[test]
 fn a_space_destination_id_must_match_a_known_space_exactly() {
     let json = r#"{"version":1,
