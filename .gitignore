@@ -2,3 +2,10 @@
 # Local analysis artefacts of closed-source apps (large, and not ours to redistribute).
 /analysis/
 __pycache__/
+# Signing and update keys stay on the owner's Mac.
+.env
+*.p8
+*.p12
+*.pem
+*.mobileprovision
+*ed25519*
