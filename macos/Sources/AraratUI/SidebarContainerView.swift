@@ -205,6 +205,17 @@ public final class SidebarContainerView: NSView {
     }
 
     public var sidebarState: String { state.mode.rawValue }
+    /// The Library's own widths (Arc's rail 112, divider 1 and list 304; §7), for the checks.
+    public static var libraryWidthsForCheck: (library: CGFloat, rail: CGFloat, divider: CGFloat) {
+        (SidebarMetrics.libraryWidth, SidebarMetrics.archiveRailContentWidth, SidebarMetrics.archiveRailDividerWidth)
+    }
+    /// The screen checks' pointer: one sample with the pointer at a window point and the clock at
+    /// `now`, so a hidden sidebar reveals at the window's edge without warping the real pointer.
+    public func checkSamplePointer(at windowPoint: NSPoint, now: TimeInterval) {
+        pointerLocation = { windowPoint }
+        clock = { now }
+        processPointer()
+    }
     /// p4checks: the state `selectionChanged` keeps, so the create page's own notify can be read.
     public var sidebarHasSelection: Bool { state.hasSelection }
     public var sidebarAnimating: Bool { moving }
