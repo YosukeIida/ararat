@@ -332,7 +332,7 @@ public final class SettingsCheckProbe: NSObject {
     }
 
     /// A real mouse down and up through the window, the SwiftUI click LookScreenCheck sends.
-    private func clickWindowPoint(_ point: NSPoint) -> Bool {
+    private func clickWindowPoint(_ point: NSPoint, enqueue: Bool = false) -> Bool {
         guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
                                             timestamp: ProcessInfo.processInfo.systemUptime,
                                             windowNumber: window.windowNumber, context: nil,
@@ -341,18 +341,32 @@ public final class SettingsCheckProbe: NSObject {
                                           timestamp: ProcessInfo.processInfo.systemUptime,
                                           windowNumber: window.windowNumber, context: nil,
                                           eventNumber: 0, clickCount: 1, pressure: 0) else { return false }
-        window.sendEvent(down)
-        window.sendEvent(up)
+        if enqueue {
+            // Why not send the events synchronously: a button can track until mouse-up.
+            NSApp.postEvent(down, atStart: false)
+            NSApp.postEvent(up, atStart: false)
+        } else {
+            window.sendEvent(down)
+            window.sendEvent(up)
+        }
         return true
     }
     public func shortcutKey(_ command: String) -> KeyCombination? { model.keyBindings.binding(command: command)?.key }
-    /// The key the app menu's Ararat Commands item carries for a command, which a recorded key
-    /// changes through `KeyBindingsModel.receive` and its registered menu.
     public func menuKeyEquivalent(_ command: String) -> (key: String, modifiers: NSEvent.ModifierFlags)? {
-        guard let item = NSApp.mainMenu?.items.compactMap({ $0.submenu }).compactMap({ menu in
-            menu.items.first { $0.identifier?.rawValue == command }
-        }).first else { return nil }
+        func find(in menu: NSMenu?) -> NSMenuItem? {
+            for item in menu?.items ?? [] {
+                if item.identifier?.rawValue == command { return item }
+                if let match = find(in: item.submenu) { return match }
+            }
+            return nil
+        }
+        guard let item = find(in: NSApp.mainMenu) else { return nil }
         return (item.keyEquivalent, item.keyEquivalentModifierMask)
+    }
+
+    public func pressArcImport() -> Bool {
+        guard let rect = marker(OnboardingCommandStore.commandID), let point = windowPoint(topDown: rect) else { return false }
+        return clickWindowPoint(point, enqueue: true)
     }
 
     // MARK: p4checks, the toolbar

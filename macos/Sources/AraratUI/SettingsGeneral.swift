@@ -53,6 +53,15 @@ struct SettingsGeneralSection: View {
                     .toggleStyle(.switch).labelsHidden().fixedSize()
                 }.id(SettingsModel.warnBeforeQuittingRowID)
             }
+            if let action = model.importFromArc {
+                SettingsGroupCard {
+                    SettingsCardRow(first: true, hit: false) {
+                        Button(OnboardingCommandStore.title, action: action)
+                            .background(SettingsMarker(id: OnboardingCommandStore.commandID))
+                        Spacer()
+                    }
+                }
+            }
             SettingsGroupCard(heading: "Downloads", marker: SettingsModel.rowMarker("downloads-card")) {
                 SettingsCardRow(first: true, hit: model.highlighted == SettingsModel.downloadsFolderRowID,
                                 marker: SettingsModel.rowMarker(SettingsModel.downloadsFolderRowID)) {

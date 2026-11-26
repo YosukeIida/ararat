@@ -101,6 +101,7 @@ public final class SettingsModel: ObservableObject {
     /// Whether the last `readGeneral` answered both core reads. The check waits for it before
     /// comparing the rows, so its conditions cannot pass on the model's initial values.
     @Published private(set) var generalLoaded = false
+    @Published var importFromArc: (() -> Void)?
     var defaultBrowserStatus: DefaultBrowserStatus = LaunchServicesDefaultBrowserStatus()
     var defaultBrowserSetter: DefaultBrowserSetter = LaunchServicesDefaultBrowser()
     var downloadsApplied: (DownloadDevice) -> Void = { _ in }

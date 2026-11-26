@@ -6,26 +6,6 @@ import ObjectiveC.runtime
 import Testing
 @testable import Ararat
 
-// U27b: `installCoreMenu` builds the Ararat Commands menu from `Runtime.coreMenuCommandIDs`.
-// A table command that is missing from the list keeps its Shortcuts row and the command bar's row
-// but has no menu item, so a recorded key would never fire. Reading the list here is the only way
-// to assert the menu without launching the app.
-@Test @MainActor
-func theAraratCommandsMenuCarriesClearCacheAndClearCookiesUnbound() throws {
-    let table = defaultKeyBindings()
-    for (id, title) in [("clear_cache_site", "Clear Cache"), ("clear_cookies_site", "Clear Cookies")] {
-        #expect(Runtime.coreMenuCommandIDs.contains(id))
-        let row = try #require(table.first { $0.command == id })
-        #expect(row.title == title)
-        #expect(row.key == nil && row.defaultKey == nil)
-        #expect(row.customized == false)
-    }
-    // Every id the menu installs resolves to a table command, so no item is added half-built.
-    for id in Runtime.coreMenuCommandIDs {
-        #expect(table.contains { $0.command == id }, "\(id)")
-    }
-}
-
 // The smallest host that survives the dispatcher's prologue: it answers the two closing
 // questions and records what it was asked to run.
 @MainActor private final class SiteCommandHost: NSObject {
@@ -95,7 +75,7 @@ func addSplitViewMenuNeedsASelectedTodayOrPinnedTab() throws {
 
 @Test @MainActor
 func theDispatcherRunsBothSiteCommandsThroughTheHost() {
-    // U27b: one dispatcher. The header … menu's ids, the Ararat Commands menu's items, the
+    // U27b: one dispatcher. The header … menu's ids, the View menu's items, the
     // command bar's rows and a recorded key all end in `performWorkspaceCommand`, and it hands
     // the same id to the engine's `runCommand`. The engine's own clear path is the header
     // check's `clear` and its `checkSiteClearResults`, so no new VM condition is needed here.
@@ -120,7 +100,6 @@ func archiveActionsNeedANonemptyRegularArchive() throws {
     #expect(!Runtime.archiveActionsEnabled(runtime))
     let binding = try #require(defaultKeyBindings().first { $0.command == "reopen_closed_tab" })
     #expect(binding.key == KeyCombination(key: "t", command: true, control: false, option: false, shift: true))
-    #expect(Runtime.coreMenuCommandIDs.contains("clear_archive"))
 }
 
 @Test @MainActor
@@ -132,6 +111,7 @@ func settingsRebindingUpdatesTheInstalledAppMenu() async throws {
     let appMenu = NSMenu()
     menu.addItem(withTitle: "Ararat", action: nil, keyEquivalent: "").submenu = appMenu
     let item = appMenu.addItem(withTitle: "Settings…", action: NSSelectorFromString("showPreferences:"), keyEquivalent: ",")
+    item.tag = 40015
     NSApp.mainMenu = menu
 
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -166,7 +146,12 @@ func chromiumNewTabMenuFollowsTheCoreBinding() async throws {
     let menu = NSMenu()
     let file = NSMenu(title: "File")
     menu.addItem(withTitle: "Ararat", action: nil, keyEquivalent: "").submenu = NSMenu()
-    menu.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = file
+    let fileItem = menu.addItem(withTitle: "File", action: nil, keyEquivalent: "")
+    fileItem.tag = 57326
+    fileItem.submenu = file
+    let view = menu.addItem(withTitle: "View", action: nil, keyEquivalent: "")
+    view.tag = 57327
+    view.submenu = NSMenu(title: "View")
     let newTab = file.addItem(withTitle: "New Tab", action: NSSelectorFromString("commandDispatch:"), keyEquivalent: "t")
     newTab.tag = 34014
     NSApp.mainMenu = menu
@@ -189,7 +174,7 @@ func chromiumNewTabMenuFollowsTheCoreBinding() async throws {
         bindings.load { continuation.resume(with: $0) }
     }
     runtime.installCoreMenu()
-    let toggleSidebar = try #require(menu.item(withTitle: "Ararat Commands")?.submenu?.item(withTitle: "Toggle Sidebar"))
+    let toggleSidebar = try #require(menu.item(withTitle: "View")?.submenu?.item(withTitle: "Toggle Sidebar"))
     #expect(bindings.binding(command: "new_tab")?.key == cmdJ)
     #expect(newTab.keyEquivalent == "j")
     #expect(newTab.keyEquivalentModifierMask == [.command])
@@ -267,52 +252,90 @@ func chromiumCloseShortcutFollowsTheActiveCloseMenuItem() throws {
 }
 
 @Test @MainActor
-func installingArchiveMenuKeepsEveryHistoryTagKnownToChromium() throws {
+func nativeMenuKeepsTheCoreBindingsInTheirNewHomes() throws {
     _ = NSApplication.shared
     let originalMenu = NSApp.mainMenu
     defer { NSApp.mainMenu = originalMenu }
-    // Why not tag 0: Chromium 9a31f0acec1854d44e49a73fbf8017598151a583's
-    // chrome/browser/ui/cocoa/history_menu_bridge.mm:725–745 accepts only these tags;
-    // history_menu_bridge.h:123–131 and chrome/app/chrome_command_ids.h define their values.
-    let handledTags: Set<Int> = [33003, 33000, 33001, 400, 401, 440, 441, 480, 40010]
     let menu = NSMenu(title: "Main")
-    for title in ["File", "History", "Tab"] {
-        menu.addItem(withTitle: title, action: nil, keyEquivalent: "").submenu = NSMenu(title: title)
+    for (title, tag) in [("Ararat", 0), ("File", 57326), ("Edit", 57343), ("View", 57327), ("Tab", 57323), ("Window", 0), ("Help", 0)] {
+        let item = menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
+        item.tag = tag
+        item.submenu = NSMenu(title: title)
     }
     let file = try #require(menu.item(withTitle: "File")?.submenu)
-    let chromiumReopen = file.addItem(withTitle: "Reopen Closed Tab", action: NSSelectorFromString("commandDispatch:"), keyEquivalent: "t")
+    let chromiumReopen = file.addItem(withTitle: "Reopen Closed Tab", action: NSSelectorFromString("commandDispatch:"), keyEquivalent: "T")
     chromiumReopen.tag = 34028
-    chromiumReopen.keyEquivalentModifierMask = [.command, .shift]
-    let history = try #require(menu.item(withTitle: "History")?.submenu)
-    for tag in handledTags.sorted() {
-        history.addItem(withTitle: "History \(tag)", action: nil, keyEquivalent: "").tag = tag
-    }
+    let view = try #require(menu.item(withTitle: "View")?.submenu)
+    let dispatch = NSSelectorFromString("commandDispatch:")
+    let back = view.addItem(withTitle: "Back", action: dispatch, keyEquivalent: "[")
+    back.tag = 33000
+    back.keyEquivalentModifierMask = .command
+    let forward = view.addItem(withTitle: "Forward", action: dispatch, keyEquivalent: "]")
+    forward.tag = 33001
+    forward.keyEquivalentModifierMask = .command
+    let stop = view.addItem(withTitle: "Stop", action: dispatch, keyEquivalent: ".")
+    stop.tag = 33006
+    let chromiumReload = view.addItem(withTitle: "Force Reload This Page", action: NSSelectorFromString("commandDispatch:"), keyEquivalent: "R")
+    chromiumReload.tag = 33007
+    chromiumReload.isAlternate = true
+    let tabs = try #require(menu.item(withTitle: "Tab")?.submenu)
+    tabs.addItem(withTitle: "Mute Site", action: nil, keyEquivalent: "").tag = 35012
+    tabs.addItem(withTitle: "Move Tab to New Window", action: nil, keyEquivalent: "").tag = 34056
     NSApp.mainMenu = menu
+
     let runtime = Runtime(windowID: "archive-menu")
     class_addProtocol(AddSplitViewHost.self, objc_getProtocol("ARWindowHostAPI")!)
     let host = AddSplitViewHost()
     runtime.host = host as? any ARWindowHostAPI
     runtime.installCoreMenu()
-    #expect(history.items.count == handledTags.count)
-    for item in history.items {
-        #expect(handledTags.contains(item.tag), "Unknown History tag: \(item.tag) (\(item.title))")
+
+    #expect(menu.items.map(\.title) == ["Ararat", "File", "Edit", "View", "Spaces", "Tabs", "Archive", "Window", "Help"])
+    #expect(view.index(of: back) + 1 == view.index(of: forward))
+    #expect(view.index(of: forward) + 1 == view.index(of: stop))
+    #expect(back.tag == 33000 && forward.tag == 33001)
+    #expect(back.action == dispatch && forward.action == dispatch)
+    #expect(back.keyEquivalent == "[" && back.keyEquivalentModifierMask == [.command])
+    #expect(forward.keyEquivalent == "]" && forward.keyEquivalentModifierMask == [.command])
+    let byMenu = [
+        "File": ["reopen_closed_tab"],
+        "Edit": ["copy_link"],
+        "View": ["toggle_sidebar", "toggle_library", "reset_sidebar_width", "force_reload", "clear_cache_site", "clear_cookies_site"],
+        "Tabs": ["cycle_tabs_next", "cycle_tabs_previous", "pin_tab", "duplicate", "add_split_view", "focus_next_pane", "focus_previous_pane", "new_folder", "rename", "delete_folder"],
+        "Archive": ["clear_archive"],
+    ]
+    let bindings = defaultKeyBindings()
+    func check(_ items: [NSMenuItem], ids: [String]) throws {
+        let registered = items.filter {
+            $0.action == #selector(Runtime.coreMenuCommand(_:)) && $0.identifier?.rawValue == $0.representedObject as? String
+        }
+        #expect(registered.compactMap { $0.identifier?.rawValue } == ids)
+        for item in registered {
+            let row = try #require(bindings.first { $0.command == item.identifier?.rawValue })
+            let expected = NSMenuItem()
+            KeyBindingsModel.setCoreMenuShortcut(row.key, on: expected)
+            #expect(item.keyEquivalent == expected.keyEquivalent)
+            #expect(item.keyEquivalentModifierMask == expected.keyEquivalentModifierMask)
+            #expect(item.target === runtime)
+        }
     }
-    let reopen = try #require(file.items.first { $0.representedObject as? String == "reopen_closed_tab" })
-    #expect(reopen === chromiumReopen)
-    #expect(reopen.title == "Reopen Closed Tab")
-    #expect(reopen.target === runtime)
-    #expect(reopen.action == #selector(Runtime.coreMenuCommand(_:)))
-    #expect(reopen.keyEquivalent == "T")
-    #expect(reopen.keyEquivalentModifierMask == [.command])
-    let shortcuts = menu.items.compactMap(\.submenu).flatMap(\.items).filter {
-        ($0.keyEquivalent == "T" && $0.keyEquivalentModifierMask == [.command]) ||
-        ($0.keyEquivalent == "t" && $0.keyEquivalentModifierMask == [.command, .shift])
+    for (title, ids) in byMenu {
+        let submenu = try #require(menu.item(withTitle: title)?.submenu)
+        try check(submenu.items, ids: ids)
     }
-    #expect(shortcuts.count == 1)
-    #expect(shortcuts.first === reopen)
-    #expect(!runtime.validateMenuItem(reopen))
+    for (parent, title, prefix) in [("Spaces", "Go to Space", "show_space"), ("Tabs", "Move to Space", "move_to_space")] {
+        let submenu = try #require(menu.item(withTitle: parent)?.submenu?.item(withTitle: title)?.submenu)
+        #expect(submenu.items.map(\.title) == (1...9).map(String.init))
+        try check(submenu.items, ids: (1...9).map { "\(prefix)_\($0)" })
+    }
+    let library = try #require(menu.item(withTitle: "Archive")?.submenu?.item(withTitle: "Show Library"))
+    #expect(library.representedObject as? String == "toggle_library")
+    #expect(library.keyEquivalent.isEmpty)
+    #expect(chromiumReopen.representedObject as? String == "reopen_closed_tab")
+    #expect(chromiumReload.representedObject as? String == "force_reload" && !chromiumReload.isAlternate)
+    #expect(runtime.displacedMenuItems["force_reload"]?.action == NSSelectorFromString("commandDispatch:"))
+    #expect(!runtime.validateMenuItem(chromiumReopen))
     runtime.snapshot = WorkspaceSnapshot(archive: [ArchiveEntry(id: "closed", title: "Closed", url: "https://closed.test", lifecycleChangedAt: 1)], shownSpaceId: nil, selectedId: nil, spaces: [])
-    #expect(runtime.validateMenuItem(reopen))
+    #expect(runtime.validateMenuItem(chromiumReopen))
     runtime.isPrivateWindow = true
     #expect(!Runtime.archiveActionsEnabled(runtime))
 }

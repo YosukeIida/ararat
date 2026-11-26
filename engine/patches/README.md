@@ -63,6 +63,7 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/viewless-read-anything.patch` | ours |
 | `ararat/viewless-bubble-anchor.patch` | ours |
 | `ararat/sad-tab-viewless.patch` | ours; Ardia has the same guard |
+| `ararat/ssl-interstitial-layout.patch` | ours |
 | `ararat/keyboard-ime-diagnostics.patch` | ours |
 | `ararat/find-close-command.patch` | ours |
 | `ararat/hidden-dialog-containment.patch` | ours |
@@ -72,6 +73,11 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/history-retention.patch` | ours |
 | `ararat/command-line-urls-hook.patch` | ours |
 | `ararat/native-editor-ime.patch` | ours |
+| `ararat/password-manager.patch` | ours |
+| `ararat/password-prompt.patch` | ours |
+| `ararat/password-prompt-trace.patch` | ours |
+| `ararat/passwords-touch-id-check.patch` | ours |
+| `ararat/menu-bar.patch` | ours, Ararat menu branding and construction without Chromium’s History, Bookmarks, Profiles and tab-list controllers, with Back and Forward in View |
 
 ## Why these upstream patches
 

@@ -196,7 +196,6 @@ public final class KeyBindingsModel: ObservableObject {
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
         let shifted = candidate.shift && key != candidate.key
         for item in menu.items {
-            if item.tag == 0x4152434d { continue } // Ararat Commands
             if let submenu = item.submenu {
                 if let holder = menuShortcutHolder(in: submenu, event: event, candidate: candidate, command: command, coreHolder: coreHolder) { return holder }
                 continue

@@ -1,0 +1,323 @@
+--- a/chrome/app/chromium_strings.grd
++++ b/chrome/app/chromium_strings.grd
+@@ -294,7 +294,7 @@
+         </then>
+         <else>
+           <message name="IDS_PRODUCT_NAME" desc="The Chrome application name" translateable="false">
+-            Chromium
++            Ararat
+           </message>
+           <message name="IDS_SHORT_PRODUCT_NAME" desc="The Chrome application short name." translateable="false">
+             Chromium
+@@ -1183,7 +1183,7 @@
+ 
+       <if expr="is_macosx">
+         <message name="IDS_APP_MENU_PRODUCT_NAME" desc="The application's short name, used for the Mac's application menu, activity monitor, etc. This should be less than 16 characters. Example: Chrome, not Google Chrome." translateable="false">
+-          Chromium
++          Ararat
+         </message>
+         <message name="IDS_HELPER_NAME" desc="The helper application's name.  Should contain the Chrome application name (IDS_PRODUCT_NAME). Example: Google Chrome Helper.">
+           Chromium Helper
+--- a/chrome/browser/ui/cocoa/main_menu_builder.mm
++++ b/chrome/browser/ui/cocoa/main_menu_builder.mm
+@@ -6,6 +6,7 @@
+ 
+ #include <AvailabilityVersions.h>
+ 
++#include "ararat/core/ararat_hooks.h"
+ #include "base/feature_list.h"
+ #include "base/i18n/rtl.h"
+ #include "base/mac/mac_util.h"
+@@ -71,7 +72,7 @@
+                   .remove_if(is_pwa),
+               Item(IDS_IMPORT_SETTINGS_MENU_MAC)
+                   .command_id(IDC_IMPORT_SETTINGS)
+-                  .remove_if(is_pwa),
++                  .remove_if(is_pwa || g_ararat_shown_browser),
+               Item().is_separator(),
+               Item(IDS_SERVICES_MAC)
+                   .tag(-1)
+@@ -125,17 +126,21 @@
+                   .remove_if(is_pwa),
+               Item(IDS_NEW_ISOLATED_WINDOW_MAC)
+                   .command_id(IDC_NEW_ISOLATED_WINDOW)
+-                  .remove_if(is_pwa),
++                  .remove_if(is_pwa || g_ararat_shown_browser),
+               Item(IDS_REOPEN_CLOSED_TABS_MAC)
+                   .command_id(IDC_RESTORE_TAB)
+                   .remove_if(is_pwa),
+-              Item(IDS_OPEN_FILE_MAC)
+-                  .command_id(IDC_OPEN_FILE)
+-                  .remove_if(is_pwa),
++              Item().is_separator().remove_if(is_pwa),
+               Item(IDS_OPEN_LOCATION_MAC)
+                   .command_id(IDC_FOCUS_LOCATION)
+                   .remove_if(is_pwa),
++              Item(IDS_OPEN_FILE_MAC)
++                  .command_id(IDC_OPEN_FILE)
++                  .remove_if(is_pwa),
+               Item().is_separator(),
++              Item(IDS_CLOSE_TAB_MAC)
++                  .command_id(IDC_CLOSE_TAB)
++                  .remove_if(is_pwa),
+               Item(IDS_CLOSE_WINDOW_MAC)
+                   .tag(IDC_CLOSE_WINDOW)
+                   .action(@selector(performClose:)),
+@@ -143,23 +148,19 @@
+                   .action(@selector(closeAll:))
+                   .is_alternate()
+                   .key_equivalent(@"W", NSEventModifierFlagCommand |
+-                                            NSEventModifierFlagOption),
+-              Item(IDS_CLOSE_TAB_MAC)
+-                  .command_id(IDC_CLOSE_TAB)
++                                            NSEventModifierFlagOption)
++                  .remove_if(g_ararat_shown_browser),
++              Item().is_separator().remove_if(is_pwa),
++              Item(IDS_SHARE_MAC)
+                   .remove_if(is_pwa),
+               Item(IDS_SAVE_PAGE_MAC)
+                   .command_id(IDC_SAVE_PAGE),
+-              Item().is_separator()
+-                  .remove_if(is_pwa),
+-              Item(IDS_SHARE_MAC)
+-                  .remove_if(is_pwa),
+-              Item().is_separator(),
+               Item(IDS_PRINT)
+                   .command_id(IDC_PRINT),
+               Item(IDS_PRINT_USING_SYSTEM_DIALOG_MAC)
+                   .command_id(IDC_BASIC_PRINT)
+                   .is_alternate()
+-                  .remove_if(is_pwa),
++                  .remove_if(is_pwa || g_ararat_shown_browser),
+           })
+           .Build();
+   // clang-format on
+@@ -290,29 +291,42 @@
+           .submenu({
+               Item(IDS_BOOKMARK_BAR_ALWAYS_SHOW_MAC)
+                   .command_id(IDC_SHOW_BOOKMARK_BAR)
+-                  .remove_if(is_pwa),
++                  .remove_if(is_pwa || g_ararat_shown_browser),
+               Item(IDS_TOGGLE_FULLSCREEN_TOOLBAR_MAC)
+-                  .command_id(IDC_TOGGLE_FULLSCREEN_TOOLBAR),
++                  .command_id(IDC_TOGGLE_FULLSCREEN_TOOLBAR)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_CONTEXT_MENU_SHOW_FULL_URLS)
+-                  .command_id(IDC_SHOW_FULL_URLS),
++                  .command_id(IDC_SHOW_FULL_URLS)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_CONTEXT_MENU_SHOW_GOOGLE_LENS_SHORTCUT)
+-                  .command_id(IDC_SHOW_GOOGLE_LENS_SHORTCUT),
++                  .command_id(IDC_SHOW_GOOGLE_LENS_SHORTCUT)
++                  .remove_if(g_ararat_shown_browser),
+                Item(IDS_AI_MODE_ENTRYPOINT_CONTEXT_MENU_SHOW)
+                    .string_format_1(
+                        l10n_util::GetStringUTF16(IDS_AI_MODE_ENTRYPOINT_LABEL))
+-                   .command_id(IDC_SHOW_AI_MODE_OMNIBOX_BUTTON),
++                   .command_id(IDC_SHOW_AI_MODE_OMNIBOX_BUTTON)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_CONTEXT_MENU_SHOW_SEARCH_TOOLS)
+-                  .command_id(IDC_SHOW_SEARCH_TOOLS),
++                  .command_id(IDC_SHOW_SEARCH_TOOLS)
++                  .remove_if(g_ararat_shown_browser),
+                Item(IDS_SWITCH_TO_VERTICAL_TAB_MAC)
+-                   .command_id(IDC_TOGGLE_VERTICAL_TABS),
++                   .command_id(IDC_TOGGLE_VERTICAL_TABS)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_VERTICAL_TABS_VIEW_MENU_TOGGLE_COLLAPSE)
+                   .command_id(IDC_TOGGLE_VERTICAL_TABS_COLLAPSE)
+-                  .key_equivalent(@"L", NSEventModifierFlagCommand),
++                  .key_equivalent(@"L", NSEventModifierFlagCommand)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_CUSTOMIZE_TOUCH_BAR)
+                   .tag(IDC_CUSTOMIZE_TOUCH_BAR)
+                   .action(@selector(toggleTouchBarCustomizationPalette:))
+-                  .remove_if(is_pwa),
+-              Item().is_separator(),
++                  .remove_if(is_pwa || g_ararat_shown_browser),
++              Item().is_separator().remove_if(g_ararat_shown_browser),
++              Item(IDS_HISTORY_BACK_MAC)
++                  .command_id(IDC_BACK)
++                  .remove_if(!g_ararat_shown_browser),
++              Item(IDS_HISTORY_FORWARD_MAC)
++                  .command_id(IDC_FORWARD)
++                  .remove_if(!g_ararat_shown_browser),
+               Item(IDS_STOP_MENU_MAC)
+                   .command_id(IDC_STOP),
+               Item(IDS_RELOAD_MENU_MAC)
+@@ -515,53 +529,67 @@
+           .submenu({
+               Item(is_rtl ? IDS_TAB_CXMENU_NEWTABTOLEFT
+                           : IDS_TAB_CXMENU_NEWTABTORIGHT)
+-                  .command_id(IDC_NEW_TAB_TO_RIGHT),
++                  .command_id(IDC_NEW_TAB_TO_RIGHT)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_TAB_CXMENU_NEWTABBELOW)
+                   .command_id(IDC_NEW_TAB_TO_RIGHT)
+-                  .set_hidden(true),
++                  .set_hidden(true)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_NEXT_TAB_MAC)
+                   .command_id(IDC_CYCLE_TO_NEXT_TAB),
+               Item(IDS_PREV_TAB_MAC)
+                   .command_id(IDC_CYCLE_TO_PREV_TAB),
+               Item(IDS_DUPLICATE_TAB_MAC)
+-                  .command_id(IDC_DUPLICATE_TAB),
++                  .command_id(IDC_DUPLICATE_TAB)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_DUPLICATE_TARGET_TAB_MAC)
+                   .command_id(IDC_DUPLICATE_TARGET_TAB)
+                   .is_alternate()
+-                  .key_equivalent(@"", NSEventModifierFlagOption),
++                  .key_equivalent(@"", NSEventModifierFlagOption)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_MUTE_SITE_MAC)
+                   .command_id(IDC_WINDOW_MUTE_SITE),
+               Item(IDS_MUTE_TARGET_SITE_MAC)
+                   .command_id(IDC_MUTE_TARGET_SITE)
+                   .is_alternate()
+-                  .key_equivalent(@"", NSEventModifierFlagOption),
++                  .key_equivalent(@"", NSEventModifierFlagOption)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_PIN_TAB_MAC)
+-                  .command_id(IDC_WINDOW_PIN_TAB),
++                  .command_id(IDC_WINDOW_PIN_TAB)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_PIN_TARGET_TAB_MAC)
+                   .command_id(IDC_PIN_TARGET_TAB)
+                   .is_alternate()
+-                  .key_equivalent(@"", NSEventModifierFlagOption),
++                  .key_equivalent(@"", NSEventModifierFlagOption)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_GROUP_TAB_MAC)
+-                  .command_id(IDC_WINDOW_GROUP_TAB),
++                  .command_id(IDC_WINDOW_GROUP_TAB)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_GROUP_TARGET_TAB_MAC)
+                   .command_id(IDC_GROUP_TARGET_TAB)
+                   .is_alternate()
+-                  .key_equivalent(@"", NSEventModifierFlagOption),
++                  .key_equivalent(@"", NSEventModifierFlagOption)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_TAB_CXMENU_CLOSEOTHERTABS)
+-                  .command_id(IDC_WINDOW_CLOSE_OTHER_TABS),
++                  .command_id(IDC_WINDOW_CLOSE_OTHER_TABS)
++                  .remove_if(g_ararat_shown_browser),
+               Item(is_rtl ? IDS_TAB_CXMENU_CLOSETABSTOLEFT
+                           : IDS_TAB_CXMENU_CLOSETABSTORIGHT)
+-                  .command_id(IDC_WINDOW_CLOSE_TABS_TO_RIGHT),
++                  .command_id(IDC_WINDOW_CLOSE_TABS_TO_RIGHT)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_TAB_CXMENU_CLOSETABSBELOW)
+                   .command_id(IDC_WINDOW_CLOSE_TABS_TO_RIGHT)
+-                  .set_hidden(true),
++                  .set_hidden(true)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_MOVE_TAB_TO_NEW_WINDOW)
+                   .command_id(IDC_MOVE_TAB_TO_NEW_WINDOW),
+               Item(IDS_TAB_CXMENU_ADD_TAB_TO_NEW_SPLIT)
+-                  .command_id(IDC_NEW_SPLIT_TAB),
++                  .command_id(IDC_NEW_SPLIT_TAB)
++                  .remove_if(g_ararat_shown_browser),
+               Item(IDS_SEARCH_TABS)
+-                  .command_id(IDC_TAB_SEARCH),
+-              Item().is_separator(),
++                  .command_id(IDC_TAB_SEARCH)
++                  .remove_if(g_ararat_shown_browser),
++              Item().is_separator().remove_if(g_ararat_shown_browser),
+           })
+           .Build();
+   // clang-format on
+@@ -626,6 +654,11 @@
+            &BuildWindowMenu,
+            &BuildHelpMenu,
+        }) {
++    if (g_ararat_shown_browser &&
++        (builder == &BuildHistoryMenu || builder == &BuildBookmarksMenu ||
++         builder == &BuildProfilesMenu)) {
++      continue;
++    }
+     auto item = builder(nsapp, app_delegate, product_name, is_pwa, is_rtl);
+     if (item) {
+       [main_menu addItem:item];
+--- a/chrome/browser/app_controller_mac.mm
++++ b/chrome/browser/app_controller_mac.mm
+@@ -1177,7 +1177,10 @@
+   // subscription each time a window becomes the main.
+   _verticalTabSubscription = {};
+ 
+-  if (browser->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL) {
++  // The bridge assumes paired horizontal and vertical menu items and adds
++  // native tab rows, neither of which exists in Ararat's workspace menu.
++  if (!g_ararat_shown_browser &&
++      browser->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL) {
+     if (!_tabMenuBridge) {
+       _tabMenuBridge = std::make_unique<TabMenuBridge>(
+           [[NSApp mainMenu] itemWithTag:IDC_TAB_MENU]);
+@@ -2007,6 +2010,8 @@
+ - (void)initProfileMenu {
+   NSMenu* mainMenu = [NSApp mainMenu];
+   NSMenuItem* profileMenu = [mainMenu itemWithTag:IDC_PROFILE_MAIN_MENU];
++  if (!profileMenu)
++    return;
+ 
+   if (!profiles::IsMultipleProfilesEnabled()) {
+     [mainMenu removeItem:profileMenu];
+@@ -2333,31 +2338,34 @@
+   if (_lastProfile == nullptr)
+     return;
+ 
+-  auto& entry = _profileBookmarkMenuBridgeMap[profile->GetPath()];
+-  if (!entry || !entry->GetProfile()) {
+-    // This creates a deep copy, but only the first 3 items in the root menu
+-    // are really wanted. This can probably be optimized, but lazy-loading of
+-    // the menu should reduce the impact in most flows.
+-    NSMenu* submenu = [bookmarkItem.submenu copy];
+-    submenu.delegate = nil;  // The delegate is also copied. Remove it.
+-
+-    // The original profile outlives the OTR profile. Always create the bridge
+-    // on the original profile, to prevent bugs WRT profile lifetime.
+-    entry = std::make_unique<BookmarkMenuBridge>(profile->GetOriginalProfile(),
+-                                                 submenu);
+-
+-    // Clear bookmarks from the old profile.
+-    entry->ClearBookmarkMenu();
+-  }
+-  _bookmarkMenuBridge = entry.get();
+-
+-  // No need to |BuildMenu| here.  It is done lazily upon menu access.
+-  bookmarkItem.submenu = _bookmarkMenuBridge->BookmarkMenu();
+-  bookmarkItem.hidden = hidden;
++  if (bookmarkItem) {
++    auto& entry = _profileBookmarkMenuBridgeMap[profile->GetPath()];
++    if (!entry || !entry->GetProfile()) {
++      // This creates a deep copy, but only the first 3 items in the root menu
++      // are really wanted. This can probably be optimized, but lazy-loading of
++      // the menu should reduce the impact in most flows.
++      NSMenu* submenu = [bookmarkItem.submenu copy];
++      submenu.delegate = nil;  // The delegate is also copied. Remove it.
++
++      // The original profile outlives the OTR profile. Always create the bridge
++      // on the original profile, to prevent bugs WRT profile lifetime.
++      entry = std::make_unique<BookmarkMenuBridge>(profile->GetOriginalProfile(),
++                                                   submenu);
+ 
+-  _historyMenuBridge = std::make_unique<HistoryMenuBridge>(_lastProfile);
+-  _historyMenuBridge->BuildMenu();
++      // Clear bookmarks from the old profile.
++      entry->ClearBookmarkMenu();
++    }
++    _bookmarkMenuBridge = entry.get();
+ 
++    // No need to |BuildMenu| here.  It is done lazily upon menu access.
++    bookmarkItem.submenu = _bookmarkMenuBridge->BookmarkMenu();
++    bookmarkItem.hidden = hidden;
++  }
++
++  if ([NSApp.mainMenu itemWithTag:IDC_HISTORY_MENU]) {
++    _historyMenuBridge = std::make_unique<HistoryMenuBridge>(_lastProfile);
++    _historyMenuBridge->BuildMenu();
++  }
+ 
+   chrome::BrowserCommandController::
+       UpdateSharedCommandsForIncognitoAvailability(

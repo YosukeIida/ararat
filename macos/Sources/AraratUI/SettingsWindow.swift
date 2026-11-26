@@ -62,6 +62,8 @@ public final class SettingsWindowController: NSWindowController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     public func refreshShortcuts() { model.readShortcuts() }
+    public func setArcImport(_ action: (() -> Void)?) { model.importFromArc = action }
+
     public func refreshGeneralSettings() { model.readGeneral() }
     public func modelUpdate(snapshot: WorkspaceSnapshot) { model.update(snapshot: snapshot) }
     public func checkResetSidebarWidth() {
