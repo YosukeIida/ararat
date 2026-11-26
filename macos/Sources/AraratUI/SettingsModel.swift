@@ -1138,7 +1138,8 @@ public final class SettingsModel: ObservableObject {
     }
 
     func setSearchSuggestionsEnabled(_ value: Bool) {
-        searchSuggestionsEnabled = writeSearchSuggestions?(value) ?? value
+        guard let writeSearchSuggestions else { return }
+        searchSuggestionsEnabled = writeSearchSuggestions(value)
     }
 
     func configureSearchSuggestions(enabled: Bool, write: @escaping (Bool) -> Bool) {

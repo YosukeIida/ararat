@@ -2504,11 +2504,12 @@ final class Runtime: NSObject, NSMenuItemValidation {
     return open(profile, loaded)
   }
 
-  func openSettings(spaceID: String? = nil, passwordsProfile: String? = nil) {
+  func openSettings(spaceID: String? = nil, passwordsProfile: String? = nil,
+                    searchSuggestions: EngineSearchSuggestionsSettings? = nil) {
     // Design: Settings opened from a private window is the normal Settings window acting on
     // the regular profile; nothing is written through the private workspace.
     if isPrivateWindow, let root, root !== self {
-      root.openSettings(spaceID: nil, passwordsProfile: passwordsProfile)
+      root.openSettings(spaceID: nil, passwordsProfile: passwordsProfile, searchSuggestions: searchSuggestions)
       return
     }
     guard let workspace, let keyBindings, let airTraffic else { return }
@@ -2558,13 +2559,8 @@ final class Runtime: NSObject, NSMenuItemValidation {
         EngineDownloadSettingsHost.apply(downloads)
       }
     }
-    if let host {
-      owner.settings?.configureSearchSuggestions(enabled: host.searchSuggestionsEnabled()) { [weak host] enabled in
-        guard let host else { return false }
-        host.setSearchSuggestionsEnabled(enabled)
-        return host.searchSuggestionsEnabled()
-      }
-    }
+    let searchSuggestions = searchSuggestions ?? .live
+    owner.settings?.configureSearchSuggestions(enabled: searchSuggestions.isEnabled(), write: searchSuggestions.write)
     // U27x: the Extensions pane reads and writes one profile's extensions through the same engine
     // bridge. Manage Extension opens the profile's own chrome://extensions page, showing that
     // profile's space first when Settings is on another one (the engine opens a tab in the shown

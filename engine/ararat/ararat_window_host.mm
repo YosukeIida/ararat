@@ -1656,6 +1656,14 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   return [[ARWindowHost alloc] initWithContentView:contentView windowId:windowId];
 }
 
+BOOL AraratSearchSuggestionsEnabled() {
+  return g_browser_process->local_state()->GetBoolean(prefs::kSearchSuggestEnabled);
+}
+
+void AraratSetSearchSuggestionsEnabled(BOOL enabled) {
+  g_browser_process->local_state()->SetBoolean(prefs::kSearchSuggestEnabled, enabled);
+}
+
 @implementation ARWindowHost {
   std::unique_ptr<AraratWindowHostCore> core_;
   std::unique_ptr<AraratDownloads> downloads_;
@@ -2650,14 +2658,6 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
                     @"private": @(profile->IsOffTheRecord()) } : @{};
 }
 
-- (BOOL)searchSuggestionsEnabled {
-  return g_browser_process->local_state()->GetBoolean(prefs::kSearchSuggestEnabled);
-}
-
-- (void)setSearchSuggestionsEnabled:(BOOL)enabled {
-  g_browser_process->local_state()->SetBoolean(prefs::kSearchSuggestEnabled, enabled);
-}
-
 - (void)cancelSearchSuggestions {
   suggest_timer_.Stop();
   suggest_loader_.reset();
@@ -2700,7 +2700,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (void)querySearchSuggestions:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, NSString*>*>*))completion {
   [self cancelSearchSuggestions];
-  if (![self searchSuggestionsEnabled] || !text.length || text.length > 2048) return;
+  if (!AraratSearchSuggestionsEnabled() || !text.length || text.length > 2048) return;
   Profile* profile = [self profileForSearchSuggestions];
   if (!profile) return;
   ChromeAutocompleteSchemeClassifier classifier(profile);
@@ -2733,7 +2733,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   suggest_timer_.Start(FROM_HERE, base::Milliseconds(250), base::BindOnce(^{
     ARWindowHost* host = weakSelf;
     if (!host || [host profileForSearchSuggestions] != profile ||
-        ![host searchSuggestionsEnabled]) {
+        !AraratSearchSuggestionsEnabled()) {
       return;
     }
     auto* service = TemplateURLServiceFactory::GetForProfile(profile);
@@ -2788,7 +2788,7 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
       if (!current) return;
       auto loader = std::move(current->suggest_loader_);
       if (!body || [current profileForSearchSuggestions] != profile ||
-          ![current searchSuggestionsEnabled]) {
+          !AraratSearchSuggestionsEnabled()) {
         return;
       }
       auto* active_service = TemplateURLServiceFactory::GetForProfile(profile);

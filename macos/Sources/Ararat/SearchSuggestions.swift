@@ -1,6 +1,33 @@
 import AraratEngineAPI
 import AraratKit
 import AraratUI
+import Darwin
+
+@MainActor
+struct EngineSearchSuggestionsSettings {
+    let isEnabled: () -> Bool
+    let setEnabled: (Bool) -> Void
+
+    private typealias GetEnabled = @convention(c) () -> Bool
+    private typealias SetEnabled = @convention(c) (Bool) -> Void
+
+    private static func symbol<T>(_ name: String) -> T {
+        guard let symbol = dlsym(Launcher.handle, name) else {
+            preconditionFailure("Missing search suggestions API: \(name)")
+        }
+        return unsafeBitCast(symbol, to: T.self)
+    }
+
+    private static let getEnabled: GetEnabled = symbol("AraratSearchSuggestionsEnabled")
+    private static let writeEnabled: SetEnabled = symbol("AraratSetSearchSuggestionsEnabled")
+
+    static let live = Self(isEnabled: { getEnabled() }, setEnabled: { writeEnabled($0) })
+
+    func write(_ enabled: Bool) -> Bool {
+        setEnabled(enabled)
+        return isEnabled()
+    }
+}
 
 extension CommandBarPresenter {
     func connectSearchSuggestions(to host: any ARWindowHostAPI) {

@@ -78,7 +78,7 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 
 Araratレイヤーの `ararat_main.mm` は、ブラウザ検査用の一時プロファイル、一時ワークスペース、モックキーチェーンの条件を満たす場合に `--ararat-check=close-successor` を受け付ける。
 
-search-suggestions パッチは、General の設定をアプリ全体で共有するため、Chromium の `prefs::kSearchSuggestEnabled` を Local State に登録する。Ararat レイヤーは各通常プロファイルの既定の `TemplateURL` と Chromium の検索候補レスポンスパーサーを使う。`search-suggestions` の検査は使い捨てのプロファイルとループバックの fixture を使う。
+search-suggestions パッチは、General の設定をアプリ全体で共有するため、Chromium の `prefs::kSearchSuggestEnabled` を Local State に登録する。リンク用のパッチは `AraratSearchSuggestionsEnabled` と `AraratSetSearchSuggestionsEnabled` を公開し、ブラウザウィンドウの有無にかかわらず設定から Local State を読み書きできるようにする。Ararat レイヤーは各通常プロファイルの既定の `TemplateURL` と Chromium の検索候補レスポンスパーサーを使う。`search-suggestions` の検査は使い捨てのプロファイルとループバックの fixture を使う。
 
 `ararat/native-editor-ime.patch` は、first responder が `RenderWidgetHostViewCocoa` のとき、Chromium が英数・かなキーを key window へ直接配送する処理を維持する。それ以外では、`TISCreateInputSourceList` が有効な `kTISTypeKeyboardInputMode` を返した場合（`includeAllInstalled = false`）、AppKit の `[super sendEvent:event]` で配送する。入力モードが有効なら、ABC を選択している間もこの経路を使う。一覧が空または NULL の場合は、U.S. 入力ソースだけの input context が U+0010 を挿入することがあるため、keyDown を破棄する。実機のJISキーボードでの入力ソース切り替えは未確認。
 

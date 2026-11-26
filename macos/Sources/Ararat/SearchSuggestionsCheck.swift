@@ -58,7 +58,7 @@ final class SearchSuggestionsCheck {
         switch runtime.browserCheckPhase {
         case 0:
             guard host.hasBrowser(), host.checkUseSearchSuggestionFixture(port) else { return }
-            guard host.searchSuggestionsEnabled() else { finish("Fresh preference is off"); return }
+            guard EngineSearchSuggestionsSettings.live.isEnabled() else { finish("Fresh preference is off"); return }
             runtime.openCommandBar(.newTab)
             runtime.browserCheckPhase = 1
         case 1:
@@ -81,7 +81,7 @@ final class SearchSuggestionsCheck {
                 return
             }
             probe.setSearchSuggestionsEnabled(false)
-            guard !host.searchSuggestionsEnabled(), !probe.searchSuggestionsEnabled else {
+            guard !EngineSearchSuggestionsSettings.live.isEnabled(), !probe.searchSuggestionsEnabled else {
                 finish("Settings did not turn off the engine preference")
                 return
             }
@@ -99,7 +99,7 @@ final class SearchSuggestionsCheck {
                 return
             }
             probe.setSearchSuggestionsEnabled(true)
-            guard host.searchSuggestionsEnabled() else { finish("Settings did not turn suggestions back on"); return }
+            guard EngineSearchSuggestionsSettings.live.isEnabled() else { finish("Settings did not turn suggestions back on"); return }
             submit("private.example/path", waitForSilence: true)
         case 6:
             guard Date() >= waitUntil else { return }
