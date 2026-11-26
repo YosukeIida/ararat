@@ -155,6 +155,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
     public var onCloseStarted: (@MainActor () -> Void)?
     public var onRowClose: (@MainActor (String) -> Void)?
     private var closingRows: Set<String> = []
+    private var closeSuccessors: [String: String] = [:]
     public var onPageFullscreenChanged: (@MainActor (Bool) -> Void)?
     public var onWindowFullscreenChanged: (@MainActor (Bool) -> Void)?
     public var onWorkspaceCommand: (@MainActor (String) -> Void)?
@@ -1068,34 +1069,64 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
             let archive = isPrivate ? false : (archive ?? row.flatMap { row in space.map { rowCloseArchives(row, in: $0) } } ?? false)
             if row?.kind == .split {
                 let targets = try archive ? store.liveArchiveSplit(item: item) : store.liveCloseSplit(item: item)
-                let snapshot = store.snapshot(windowId: self.windowID)
+                let after = store.snapshot(windowId: self.windowID)
+                let successor = self.unloadedSuccessor(before: snapshot, after: after)
                 DispatchQueue.main.async {
                     if animate { self.closingRows.insert(item) }
                     else { self.closingRows.remove(item) }
                     self.session.closeLiveTargets(targets, report: self.report)
-                    self.deliverIfCurrent(snapshot)
+                    self.deliverIfCurrent(after)
+                    if let successor { self.loadCloseSuccessor(successor) }
                     self.onWorkspaceChange?()
                 }
                 return
             }
             guard let liveID = store.liveTab(item: item) else {
-                let snapshot = try archive
+                let after = try archive
                     ? store.archiveItem(windowId: self.windowID, id: item)
                     : store.closeItem(windowId: self.windowID, id: item)
+                let successor = self.unloadedSuccessor(before: snapshot, after: after)
                 DispatchQueue.main.async {
                     if animate { self.closingRows.insert(item) }
                     else { self.closingRows.remove(item) }
-                    self.deliverIfCurrent(snapshot)
+                    self.deliverIfCurrent(after)
+                    if let successor { self.loadCloseSuccessor(successor) }
                 }
                 return
             }
             let command = try archive ? store.liveArchive(item: item) : store.liveClose(item: item)
+            let successor = self.unloadedSuccessor(before: snapshot, after: store.snapshot(windowId: self.windowID))
             DispatchQueue.main.async {
                 if animate { self.closingRows.insert(item) }
                 else { self.closingRows.remove(item) }
-                self.session.tab(liveID)?.close(withCommandId: command.id)
+                guard let tab = self.session.tab(liveID) else { return }
+                // A refused close can restore its old selection, so wait for the reply.
+                self.closeSuccessors[command.id] = successor
+                tab.close(withCommandId: command.id)
             }
         } catch { self.report(error) }
+    }
+
+    private func unloadedSuccessor(before: WorkspaceSnapshot, after: WorkspaceSnapshot) -> String? {
+        guard let id = after.selectedId, id != before.selectedId, before.shownSpaceId == after.shownSpaceId,
+              let space = before.spaces.first(where: { $0.id == before.shownSpaceId }),
+              (space.today + space.pinned + space.favorites).contains(where: { $0.id == id && $0.unloaded }) else { return nil }
+        return id
+    }
+
+    private func loadCloseSuccessor(_ id: String) {
+        guard !restoringSelection, littleWindowHandoffs == 0,
+              // A click already on its way keeps the row it names.
+              (selectionRequest?.item ?? id) == id,
+              let url = queue.sync(execute: { () -> String? in
+                  guard let store, store.liveTab(item: id) == nil else { return nil }
+                  let current = store.snapshot(windowId: windowID)
+                  guard current.selectedId == id,
+                        let space = current.spaces.first(where: { $0.id == current.shownSpaceId }) else { return nil }
+                  return (space.today + space.pinned + space.favorites).first(where: { $0.id == id })?.url
+              }) else { return }
+        tracePrivate("close-successor open item=\(id)")
+        select(id: id, url: url)
     }
 
     public func pageCard(forWindowHost host: any ARWindowHostAPI) -> NSView { card }
@@ -1155,6 +1186,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
         precondition(Thread.isMainThread)
         traceToday("close=cancelled item=\(itemId) command=\(commandId)")
         closingRows.remove(itemId)
+        for adapter in session.attachedAdapters() { adapter.closeSuccessors.removeValue(forKey: commandId) }
         queue.async {
             do {
                 guard let store = self.store else { return }
@@ -1307,6 +1339,13 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     return (command, target, generation)
                 }
                 let snapshot = store.snapshot(windowId: self.windowID)
+                let chromeSuccessor: String?
+                if case .chrome = transaction.cause, let id = self.unloadedSuccessor(before: before, after: snapshot),
+                   outcome.commands.contains(where: { $0.kind == .activate && $0.item == id && $0.targetWindow == self.windowID }) {
+                    chromeSuccessor = id
+                } else {
+                    chromeSuccessor = nil
+                }
                 self.traceLittleWindow("transaction-selection rev=\(rev) before=\(before.selectedId ?? "nil") selected=\(snapshot.selectedId ?? "nil") commands=\(outcome.commands.map { "\($0.kind):\($0.id):\($0.item):\($0.targetWindow ?? "nil")" })")
                 self.tracePrivate("transaction applied epoch=\(epoch) rev=\(rev) cause=\(cause) applied=\(outcome.applied) strips=\(transaction.strips.map { "\($0.window):active=\($0.active ?? "nil")" }) adopted=\(outcome.adopted.map { "\($0.liveId):\($0.item)" }) beforeSelected=\(before.selectedId ?? "nil") beforeSpace=\(before.shownSpaceId ?? "nil") selected=\(snapshot.selectedId ?? "nil") storedSelected=\(store.selectedItem(windowId: self.windowID) ?? "nil") shownSpace=\(snapshot.shownSpaceId ?? "nil")")
                 let movedLives = transaction.strips.flatMap { strip in strip.tabs.compactMap { tab -> (String, String)? in
@@ -1359,6 +1398,13 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
                     }
                     self.maybeFinishCrashRecovery()
                     self.deliverIfCurrent(snapshot)
+                    if outcome.applied, let chromeSuccessor { self.loadCloseSuccessor(chromeSuccessor) }
+                    if case .command(let command) = transaction.cause {
+                        for (adapter, _) in selections {
+                            guard let successor = adapter.closeSuccessors.removeValue(forKey: command), outcome.applied else { continue }
+                            adapter.loadCloseSuccessor(successor)
+                        }
+                    }
                     if let own = transaction.strips.first(where: { $0.window == self.windowID }),
                        let active = own.active, let tab = self.tab(active), let item = tab.itemId {
                         self.session.captureSnapshot(tab, item: item)
@@ -1381,6 +1427,7 @@ public final class EngineAdapter: NSObject, ARWindowHostDelegate {
 
     public func shutdown() {
         precondition(Thread.isMainThread)
+        closeSuccessors.removeAll()
         setSelectionClosed(true)
         for view in failureViews.values { view.uncover(restoreFocus: false); view.removeFromSuperview() }
         failureViews.removeAll()

@@ -77,10 +77,49 @@ fn successor_skips_tabs_inside_collapsed_folders() {
 }
 
 #[test]
-fn successor_skips_unloaded_tabs() {
+fn successor_takes_an_unloaded_tab_below_and_loads_it() {
     let mut ws = workspace(); ws.items.get_mut("c").unwrap().lifecycle = Lifecycle::Unloaded;
+    let mut replay = ws.clone();
+    let ops = ws.close_item("b").unwrap();
+    for op in &ops { replay.apply(op); }
+    assert_eq!(replay, ws);
+    assert_eq!(ws.selected("test"), Some("c"));
+    assert_eq!(ws.items["c"].lifecycle, Lifecycle::Open);
+    assert_eq!(ws.items["c"].lifecycle_changed_at, ws.items["b"].lifecycle_changed_at);
+    assert!(ws.last_selected.contains_key("c"));
+}
+
+#[test]
+fn successor_takes_an_unloaded_tab_above_when_nothing_is_below() {
+    let mut ws = workspace(); ws.items.remove("c");
+    ws.items.get_mut("a").unwrap().lifecycle = Lifecycle::Unloaded;
+    set_selection(&mut ws, "b");
     ws.close_item("b").unwrap();
     assert_eq!(ws.selected("test"), Some("a"));
+    assert_eq!(ws.items["a"].lifecycle, Lifecycle::Open);
+}
+
+#[test]
+fn successor_follows_the_selection_history_across_load_states() {
+    let mut ws = workspace(); ws.items.get_mut("c").unwrap().lifecycle = Lifecycle::Unloaded;
+    // a was selected before b, so the history's row wins over the unloaded row below.
+    ws.windows.get_mut("test").unwrap().history = vec!["b".into(), "a".into()];
+    ws.close_item("b").unwrap();
+    assert_eq!(ws.selected("test"), Some("a"));
+    assert_eq!(ws.items["c"].lifecycle, Lifecycle::Unloaded);
+}
+
+#[test]
+fn successor_skips_unloaded_tabs_inside_collapsed_folders() {
+    let mut ws = workspace();
+    add(&mut ws, "folder", "today-work", "ba", ItemKind::Folder);
+    ws.folder_collapsed.insert("folder".into(), true);
+    let hidden = ws.items.get_mut("c").unwrap();
+    hidden.membership.parent = Some("folder".into());
+    hidden.lifecycle = Lifecycle::Unloaded;
+    ws.close_item("b").unwrap();
+    assert_eq!(ws.selected("test"), Some("a"));
+    assert_eq!(ws.items["c"].lifecycle, Lifecycle::Unloaded);
 }
 
 #[test]
@@ -202,6 +241,19 @@ fn a_split_with_an_unloaded_member_stays_open_until_that_member_closes() {
     ws.close_item("c").unwrap();
     assert_eq!(ws.items["split"].lifecycle, Lifecycle::Closed);
     assert_eq!(ws.selected("test"), Some("d"));
+}
+
+#[test]
+fn closing_a_selected_member_loads_the_unloaded_member_beside_it() {
+    // Split continuity reads the load state too: the member beside the closed one is the
+    // successor even when it is unloaded, and the close loads it the way a click does.
+    let mut ws = split_workspace();
+    set_selection(&mut ws, "b");
+    ws.items.get_mut("c").unwrap().lifecycle = Lifecycle::Unloaded;
+    ws.close_item("b").unwrap();
+    assert_eq!(ws.items["split"].lifecycle, Lifecycle::Open);
+    assert_eq!(ws.selected("test"), Some("c"));
+    assert_eq!(ws.items["c"].lifecycle, Lifecycle::Open);
 }
 
 #[test]

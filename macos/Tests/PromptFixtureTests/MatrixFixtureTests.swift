@@ -1049,6 +1049,73 @@ func closeSuccessorDoesNotDispatchOverAnInFlightClick() async throws {
     #expect(resolved == [command])
 }
 
+@Test(arguments: [false, true], [false, true]) @MainActor
+func aCloseLoadsOnlyAnUnloadedSuccessor(appClose: Bool, unloaded: Bool) async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let session = WorkspaceSession()
+    let engine = try EngineAdapter(path: dir.appendingPathComponent("db").path, windowID: "successor", card: NSView(), session: session)
+    let (fake, host) = matrixFake()
+    engine.attach(host)
+    defer { engine.shutdown() }
+
+    let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().appendingPathComponent("Sources/AraratHarness/Fixtures/arc-sidebar-synthetic.json")
+    let (open, neighbour) = try session.queue.sync { () -> (String, String) in
+        let store = try #require(session.store)
+        _ = try store.importArcSidebar(windowId: "successor", json: String(contentsOf: fixture, encoding: .utf8),
+                                       windowsJson: nil, keyBindingsJson: nil, linkRoutingJson: nil, ownerProfile: nil)
+        try store.showSpace(windowId: "successor", spaceId: "space-work")
+        // The import leaves tab-spec Unloaded; moving it into Today puts an unloaded row above
+        // the row the close removes, which is the successor the rule picks.
+        _ = try store.moveItem(windowId: "successor", id: "tab-spec", container: "today-work", index: 0, openFolder: false)
+        return (try #require(store.createTab(windowId: "successor", url: "about:blank?open").selectedId), "tab-spec")
+    }
+    fake.entries = [MatrixFakeTab(item: open, live: "live-open", profile: "Default", owner: fake)]
+    fake.active = "live-open"
+    var lastApplied: UInt64?
+    engine.onTransaction = { if $1 { lastApplied = $0.rev } }
+    engine.windowHost(host, didReceiveTransaction: matrixTransaction(fake, window: "successor", epoch: 1, rev: 0, command: nil))
+    try await matrixWait { lastApplied == 0 }
+    try session.queue.sync {
+        let store = try #require(session.store)
+        if !unloaded {
+            _ = try store.selectItem(windowId: "successor", id: neighbour)
+            _ = try store.selectItem(windowId: "successor", id: open)
+        }
+        let row = store.snapshot(windowId: "successor").spaces.flatMap(\.today).first { $0.id == neighbour }
+        #expect(row?.unloaded == unloaded)
+        #expect(store.liveTab(item: neighbour) == nil)
+    }
+
+    var command: String?
+    if appClose {
+        engine.close(id: open)
+        try await matrixWait { fake.closed.count == 1 }
+        command = try #require(fake.closed.first)
+        #expect(fake.opened.isEmpty)
+    }
+    fake.entries.removeAll { $0.itemId == open }
+    fake.active = nil
+    var close = matrixTransaction(fake, window: "successor", epoch: 1, rev: 1, command: command)
+    if !appClose { close["cause"] = "Chrome" }
+    engine.windowHost(host, didReceiveTransaction: close)
+    try await matrixWait { lastApplied == 1 }
+
+    #expect(session.queue.sync { session.store?.selectedItem(windowId: "successor") } == neighbour)
+    if unloaded {
+        try await matrixWait { !fake.opened.isEmpty }
+        let opened = try #require(session.queue.sync { session.store?.liveTab(item: neighbour) })
+        #expect(fake.opened == [opened])
+        #expect(fake.entries.map(\.itemId) == [neighbour])
+        #expect(fake.entries.first?.liveId == opened)
+    } else {
+        #expect(session.queue.sync { session.store?.liveTab(item: neighbour) } == nil)
+        #expect(fake.opened.isEmpty)
+    }
+}
+
 @Test @MainActor
 func addSplitUsesTheCurrentWindowSelectionBeforeTheSidebarRefreshes() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
