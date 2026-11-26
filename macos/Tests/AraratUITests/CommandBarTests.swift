@@ -939,3 +939,61 @@ private final class EmptyCleaningCommandBarStore: CommandBarStore {
         text.contains { $0.isLetter || $0.isNumber || $0 == "." } ? "search:" + text : ""
     }
 }
+
+@Test @MainActor
+func searchSuggestionsFollowLocalRowsAndOnlyApplyToTheCurrentOpenQuery() {
+    let controller = CommandBarController()
+    let store = FakeCommandBarStore()
+    let local = (0..<5).map { barRow("Local \($0)", target: .command(id: "local-\($0)")) }
+    store.results["draft"] = CommandBarResult(rows: local, privateWindow: false)
+    let suggestion = barRow("Draft suggestion", target: .search(url: "https://search.example/?q=draft+suggestion"))
+    var cancellations = 0
+    controller.onSuggestionQuery = { text, _ in if text == nil { cancellations += 1 } }
+
+    controller.open(mode: .newTab, prefill: nil, store: store)
+    controller.update(query: "draft")
+    let draftGeneration = controller.queryGeneration
+    controller.moveSelection(by: 2)
+    controller.updateSearchSuggestions([suggestion], generation: draftGeneration)
+    #expect(controller.result.rows == local + [suggestion])
+    #expect(controller.selectedIndex == 2)
+    controller.moveSelection(by: 3)
+    #expect(controller.previewText == suggestion.title)
+
+    controller.update(query: "second")
+    controller.update(query: "draft")
+    controller.updateSearchSuggestions([suggestion], generation: draftGeneration)
+    #expect(controller.result.rows == local)
+
+    controller.close()
+    controller.updateSearchSuggestions([suggestion], generation: controller.queryGeneration)
+    #expect(controller.result.rows == local)
+    #expect(cancellations == 1)
+
+    controller.privateWindow = true
+    controller.open(mode: .newTab, prefill: nil, store: store)
+    controller.update(query: "draft")
+    controller.updateSearchSuggestions([suggestion], generation: controller.queryGeneration)
+    #expect(controller.result.rows == local)
+}
+
+@Test @MainActor
+func searchSuggestionsKeepTheLocalRowsInPlaceInAShortWindow() {
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 420),
+                          styleMask: [.titled], backing: .buffered, defer: false)
+    let presenter = CommandBarPresenter(parent: window, visible: false, bindings: [], highlight: .systemBlue)
+    let store = FakeCommandBarStore()
+    let local = (0..<5).map { barRow("Local \($0)", target: .command(id: "local-\($0)")) }
+    store.results["draft"] = CommandBarResult(rows: local, privateWindow: false)
+    presenter.open(mode: .newTab, prefill: nil)
+    presenter.applyStore(store)
+    presenter.controller.update(query: "draft")
+    let top = presenter.panel.frame.maxY
+
+    let suggestions = (0..<3).map { barRow("Draft \($0)", target: .search(url: "https://search.example/?q=\($0)")) }
+    presenter.controller.updateSearchSuggestions(suggestions, generation: presenter.controller.queryGeneration)
+    #expect(Array(presenter.controller.result.rows.prefix(5)) == local)
+    #expect(presenter.controller.result.rows.count < local.count + suggestions.count)
+    #expect(abs(presenter.panel.frame.maxY - top) < 1)
+    presenter.close()
+}

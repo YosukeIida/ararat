@@ -985,6 +985,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
   var screenSidebarLights = false
   var screenAppKitLightsHidden = false
   var screenClosingOffset = 0
+  var searchSuggestionsCheck: SearchSuggestionsCheck?
   var browserCheckMode: String?
   var profileCheckStates: [[String: Any]] = []
   var extensionFocusProbe: [String: Any] = [:]
@@ -1210,10 +1211,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
       $0 == "--ararat-screen=password-prompt" || $0 == "--ararat-screen=passwords-real-auth" || $0 == "--ararat-screen=passwords-touch-id"
     }).map { String($0.dropFirst(16)) }
       ?? arguments.first(where: { $0.hasPrefix("--ararat-screen=") }).map { String($0.dropFirst(16)) }
-    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "passwords", ArcPasswordImportCheck.mode, "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live", "atc-routing", CloseSuccessorCheck.mode].contains(checkName) { return }
+    if session == nil, let checkName, !["slice", "quit", "quit-cancel", "close", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "passwords", ArcPasswordImportCheck.mode, "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live", "atc-routing", CloseSuccessorCheck.mode, SearchSuggestionsCheck.mode].contains(checkName) { return }
     if session == nil {
       quitMode = screenName == "quit" ? "screen-quit" : (["quit", "quit-cancel", "close"].contains(checkName ?? "") ? checkName : nil)
-      if ["atc-routing", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "passwords", ArcPasswordImportCheck.mode, "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live", CloseSuccessorCheck.mode].contains(checkName ?? "") { browserCheckMode = checkName }
+      if ["atc-routing", "newtab", "popup", "menu", "empty", "deferred", "profiles", "ext-windows", "ext-popup", "ext-windows-popup", "incognito", "permissions", "dialogs", "protocol", "autofill", "devtools", "fullscreen", "keyboard", "organize", "look", "downloads", "download-close", "errorpages", "dock", "commandbar", "sadtab", "relaunch-seed", "relaunch-verify", "history-clear", "history-purge", "private-window", "private-isolation", "private-downloads", "private-durability-seed", "private-durability-verify", "sidebar-rows", "folder-empty", "today", "space-name", "toasts", "split-focus", "split-commands", "header", "urlfield", "site-controls", "passwords", ArcPasswordImportCheck.mode, "ext-actions", "little-window", "onboarding", "window-drag", "create-space", "folder-upload", "auto-archive", "delete-space-live", CloseSuccessorCheck.mode, SearchSuggestionsCheck.mode].contains(checkName ?? "") { browserCheckMode = checkName }
       if checkName == "download-close" { browserCheckMode = checkName }
       if checkName == "errorpages" { browserCheckMode = checkName }
       if checkName == "devtools" { devtoolsFrontBefore = commandOutput("/usr/bin/lsappinfo", ["front"]) }
@@ -2557,6 +2558,13 @@ final class Runtime: NSObject, NSMenuItemValidation {
         EngineDownloadSettingsHost.apply(downloads)
       }
     }
+    if let host {
+      owner.settings?.configureSearchSuggestions(enabled: host.searchSuggestionsEnabled()) { [weak host] enabled in
+        guard let host else { return false }
+        host.setSearchSuggestionsEnabled(enabled)
+        return host.searchSuggestionsEnabled()
+      }
+    }
     // U27x: the Extensions pane reads and writes one profile's extensions through the same engine
     // bridge. Manage Extension opens the profile's own chrome://extensions page, showing that
     // profile's space first when Settings is on another one (the engine opens a tab in the shown
@@ -3284,7 +3292,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
         }
       }
     }
-    presenter.controller.privateWindow = host.isPrivateWindow()
+    presenter.connectSearchSuggestions(to: host)
     presenter.controller.onQuery = { [weak self, weak presenter, weak host] text, generation in
       guard let presenter, let host, !presenter.controller.privateWindow, presenter.controller.mode != .search else { return }
       self?.privateHistoryQueries += 1
@@ -3733,6 +3741,11 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       } else if let host {
         passwordCheckTick(host)
       }
+      return
+    }
+    if mode == SearchSuggestionsCheck.mode {
+      if searchSuggestionsCheck == nil { searchSuggestionsCheck = SearchSuggestionsCheck() }
+      searchSuggestionsCheck?.tick(self)
       return
     }
     if mode == "atc-routing" {

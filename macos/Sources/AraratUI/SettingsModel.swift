@@ -97,6 +97,8 @@ public final class SettingsModel: ObservableObject {
     @Published private(set) var defaultBrowserIsDefault = false
     @Published var startup: StartupBehavior = .restoreWindows
     @Published private(set) var warnBeforeQuitting = true
+    @Published private(set) var searchSuggestionsEnabled = true
+    var writeSearchSuggestions: ((Bool) -> Bool)?
     @Published var downloads: DownloadDevice = .board
     /// Whether the last `readGeneral` answered both core reads. The check waits for it before
     /// comparing the rows, so its conditions cannot pass on the model's initial values.
@@ -340,6 +342,7 @@ public final class SettingsModel: ObservableObject {
     public static let defaultBrowserStatusMarker = "default-browser-status"
     public static let makeDefaultButtonMarker = "make-default-button"
     public static let startupRowID = "startup"
+    public static let searchSuggestionsRowID = "search-suggestions"
     static let warnBeforeQuittingRowID = "warn-before-quitting"
     public static let startupMenuMarker = "startup-menu"
     public static let downloadsFolderRowID = "downloads-folder"
@@ -1132,6 +1135,15 @@ public final class SettingsModel: ObservableObject {
             guard let self, self.contextGeneration == generation, case .success = result else { return }
             self.warnBeforeQuitting = value
         }
+    }
+
+    func setSearchSuggestionsEnabled(_ value: Bool) {
+        searchSuggestionsEnabled = writeSearchSuggestions?(value) ?? value
+    }
+
+    func configureSearchSuggestions(enabled: Bool, write: @escaping (Bool) -> Bool) {
+        searchSuggestionsEnabled = enabled
+        writeSearchSuggestions = write
     }
 
     /// Save downloads to: the folder the chooser answered, as the whole device record. The app

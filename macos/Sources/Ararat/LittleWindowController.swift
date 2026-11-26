@@ -516,7 +516,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
     /// ⌘L opens the command bar at the bar's width, in Edit URL mode with the page's URL. The
     /// bar's store offers the typed row only: this window has no space to list.
     func openCommandBar() {
-        guard let window, popup.host != nil, !opening else { return }
+        guard let window, let host = popup.host, !opening else { return }
         presenter?.close(restoreFocus: false)
         let presenter = CommandBarPresenter(parent: window, visible: commandBarVisible, bindings: defaultKeyBindings(),
                                             highlight: SpaceAccent.teal,
@@ -525,6 +525,7 @@ final class LittleWindowController: NSObject, NSPopoverDelegate {
             FileHandle.standardError.write(Data("ararat-trace: little-window submit store_ready_at_submission=\(presenter?.controller.storeReadyAtSubmission == true)\n".utf8))
             self?.commit(suggestion, mode: mode)
         }
+        presenter.connectSearchSuggestions(to: host)
         self.presenter = presenter
         checkActions["command_bar", default: 0] += 1
         presenter.open(mode: .editURL, prefill: pageTab?.url)

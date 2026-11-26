@@ -24,6 +24,10 @@ import Testing
     @objc(isClosing) func isClosing() -> Bool { closing }
     @objc(isClosingAll) func isClosingAll() -> Bool { false }
     @objc(profileDirectory) func profileDirectory() -> String { "Default" }
+    @objc func isPrivateWindow() -> Bool { false }
+    @objc func cancelSearchSuggestions() {}
+    @objc(querySearchSuggestions:completion:)
+    func querySearchSuggestions(_ text: String, completion: ([[String: String]]) -> Void) {}
     @objc(tabs) func tabs() -> [Any] { [] }
     @objc(setProfileDirectory:) func setProfileDirectory(_ profile: String) -> Bool { true }
     @objc(extensionManagementURL:) func extensionManagementURL(_ id: String) -> String? { "chrome://extensions/?id=\(id)" }

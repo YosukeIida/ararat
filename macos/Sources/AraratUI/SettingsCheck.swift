@@ -439,6 +439,9 @@ public final class SettingsCheckProbe: NSObject {
     /// shows a panel.
     public var defaultBrowserIsDefault: Bool { model.defaultBrowserIsDefault }
     public var generalLoaded: Bool { model.generalLoaded }
+    public var searchSuggestionsEnabled: Bool { model.searchSuggestionsEnabled }
+    public func setSearchSuggestionsEnabled(_ value: Bool) { model.setSearchSuggestionsEnabled(value) }
+
     public var startup: StartupBehavior { model.startup }
     public var startupLabel: String { model.startupLabel }
     public var downloads: DownloadDevice { model.downloads }

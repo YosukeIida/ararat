@@ -2,7 +2,7 @@ import AppKit
 import AraratKit
 
 /// The command bar panel: a wide translucent panel with the input row on top and
-/// up to five result rows below. Adapted from Cra's MIT
+/// result rows below. Adapted from Cra's MIT
 /// `Sources/Cra/UI/CommandBar/CommandBarView.swift` (favicons and Site Search are left out
 /// until the engine brings them) and its CommandBarPanel.
 @MainActor
@@ -15,6 +15,7 @@ public final class CommandBarView: NSView {
     private let leadingIcon = NSImageView()
     private let text: CommandTextField
     private let divider = NSView()
+    private let searchSuggestionsDivider = NSView()
     private let privateNote = NSTextField(labelWithString: "Nothing is added to history in a private window.")
     private var rows: [CommandBarRowView] = []
 
@@ -33,10 +34,11 @@ public final class CommandBarView: NSView {
         leadingIcon.wantsLayer = true
         leadingIcon.layer?.cornerCurve = .continuous
         divider.wantsLayer = true
+        searchSuggestionsDivider.wantsLayer = true
         privateNote.font = .systemFont(ofSize: 12)
         privateNote.textColor = .secondaryLabelColor
         privateNote.alignment = .center
-        for view in [material, tint, leadingIcon, text.field, divider, privateNote] as [NSView] { addSubview(view) }
+        for view in [material, tint, leadingIcon, text.field, divider, searchSuggestionsDivider, privateNote] as [NSView] { addSubview(view) }
         layer?.addSublayer(border)
         border.zPosition = 10
         controller.onChange = { [weak self] in self?.sync() }
@@ -86,6 +88,8 @@ public final class CommandBarView: NSView {
         border.strokeColor = NSColor.labelColor.withAlphaComponent(dark ? 0.12 : 0.08).cgColor // [Cra, V:106,177]
         divider.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
         divider.isHidden = items.isEmpty
+        searchSuggestionsDivider.layer?.backgroundColor = divider.layer?.backgroundColor
+        searchSuggestionsDivider.isHidden = controller.localRowCount == 0 || controller.localRowCount == items.count
         privateNote.isHidden = !controller.result.privateWindow
         // The field's leading icon: a magnifying glass (favicon when the engine brings a cache) [Cra, F:35-41, V:138-145].
         leadingIcon.imageScaling = .scaleNone
@@ -131,6 +135,10 @@ public final class CommandBarView: NSView {
         leadingIcon.frame = NSRect(x: 22, y: (fieldHeight - iconSize) / 2, width: iconSize, height: iconSize)
         text.field.frame = NSRect(x: 22 + 22 + 14, y: (fieldHeight - 30) / 2 + 2, width: max(0, bounds.width - 22 - 22 - 14 - 22), height: 30)
         divider.frame = NSRect(x: 16, y: fieldHeight, width: max(0, bounds.width - 32), height: 1)
+        searchSuggestionsDivider.frame = NSRect(x: divider.frame.minX,
+            y: fieldHeight + CommandBarMetrics.rowInset - 1
+                + CGFloat(controller.localRowCount) * (CommandBarMetrics.rowHeight + CommandBarMetrics.rowGap),
+            width: divider.frame.width, height: 1)
         privateNote.frame = NSRect(x: 10, y: bounds.height - 32, width: bounds.width - 20, height: 32)
         var y: CGFloat = fieldHeight + CommandBarMetrics.rowInset
         for row in rows where !row.isHidden {
@@ -222,7 +230,7 @@ final class CommandBarRowView: NSView {
             trailing.font = .systemFont(ofSize: 14, weight: .medium)
             switch suggestion.target {
             case .openUrl: trailing.stringValue = "Open URL"
-            case .search: trailing.stringValue = "Search"
+            case .search: trailing.stringValue = suggestion.subtitle
             case .history: trailing.stringValue = "History"
             case .space: trailing.stringValue = "Switch to Space"
             case .folder: trailing.stringValue = "Open Folder"

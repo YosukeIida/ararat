@@ -51,3 +51,4 @@ ararat/password-prompt.patch
 ararat/password-prompt-trace.patch
 ararat/passwords-touch-id-check.patch
 ararat/menu-bar.patch
+ararat/search-suggestions-pref.patch

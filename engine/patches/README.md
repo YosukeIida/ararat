@@ -78,6 +78,7 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/password-prompt-trace.patch` | ours |
 | `ararat/passwords-touch-id-check.patch` | ours |
 | `ararat/menu-bar.patch` | ours, Ararat menu branding and construction without Chromium’s History, Bookmarks, Profiles and tab-list controllers, with Back and Forward in View |
+| `ararat/search-suggestions-pref.patch` | ours |
 
 ## Why these upstream patches
 
@@ -87,6 +88,8 @@ is in `docs/research/ungoogled-inventory.md` §8.
 ## Notes on our patches
 
 The Ararat layer's `ararat_main.mm` admits `--ararat-check=close-successor` under the existing scratch-profile, scratch-workspace and mock-keychain guards for browser checks.
+
+The search-suggestions patch registers Chromium's `prefs::kSearchSuggestEnabled` in Local State for the app-wide General setting. The Ararat layer uses each regular profile's default `TemplateURL` and Chromium's suggestion response parser. The `search-suggestions` check uses a loopback fixture in a scratch profile.
 
 `ararat/native-editor-ime.patch` keeps Chromium's direct Eisu/Kana delivery to the key window for `RenderWidgetHostViewCocoa`. For other first responders, it uses AppKit's `[super sendEvent:event]` path when `TISCreateInputSourceList` finds an enabled `kTISTypeKeyboardInputMode` (`includeAllInstalled = false`). This includes ABC selection while an input mode is enabled. An empty or null list causes the patch to drop the keyDown because a U.S.-only input context can insert U+0010. Switching input sources on a physical JIS keyboard remains unverified.
 

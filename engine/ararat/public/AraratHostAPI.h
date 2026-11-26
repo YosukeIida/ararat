@@ -343,6 +343,11 @@ typedef struct {
 // checks read it, and so does `settings-general` (P5b): the pane's folder and switch are only
 // proved to reach Chromium by reading them back here.
 - (NSDictionary<NSString*, id>*)downloadsCheckSettings;
+- (BOOL)searchSuggestionsEnabled;
+- (void)setSearchSuggestionsEnabled:(BOOL)enabled;
+- (void)querySearchSuggestions:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, NSString*>*>*))completion;
+- (void)cancelSearchSuggestions;
+- (BOOL)checkUseSearchSuggestionFixture:(uint16_t)port;
 - (void)queryHistory:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, id>*>*))completion;
 - (void)checkKeyboardCommand:(NSString*)command;
 - (void)checkSetFindPasteboard:(NSString*)text;

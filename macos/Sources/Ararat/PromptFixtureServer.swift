@@ -5,6 +5,8 @@ final class PromptFixtureServer {
   private let listener: NWListener
   private let tracePasswordPrompt: Bool
   private let queue = DispatchQueue(label: "ararat.prompt-fixture")
+  private var suggestions: [String] = []
+  private var searches: [String] = []
   private var resumeAllowed = false
   private var pendingConnections: [NWConnection] = []
 
@@ -33,6 +35,10 @@ final class PromptFixtureServer {
   }
 
   func stop() { listener.cancel() }
+
+  func suggestRequests() -> (suggestions: [String], searches: [String]) {
+    queue.sync { (suggestions, searches) }
+  }
   func allowDownloadResume(_ completion: @escaping () -> Void) {
     queue.async { self.resumeAllowed = true; completion() }
   }
@@ -99,6 +105,23 @@ final class PromptFixtureServer {
           let header = "HTTP/1.1 \(start == nil ? "200 OK" : "206 Partial Content")\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\(name)\r\nContent-Length: \(start == nil ? total : total - offset)\r\nAccept-Ranges: bytes\r\nETag: \"ararat-download-fixture\"\r\nCache-Control: no-store\r\nConnection: close\r\n\(rangeHeader)\r\n"
           connection.send(content: Data(header.utf8) + Data(repeating: 65, count: count), completion: .contentProcessed { _ in connection.cancel() })
           return
+        }
+        if path == "/suggest" || path == "/search" {
+          let encodedQuery = URLComponents(string: target)?.percentEncodedQueryItems?.first { $0.name == "q" }?.value ?? ""
+          let query = encodedQuery.replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? ""
+          if path == "/search" {
+            self.searches.append(query)
+          } else {
+            self.suggestions.append(query)
+            let candidates = query == "どらえもん" ? ["ドラえもん", "ドラえもん映画"] : [query + " fixture"]
+            let body = (try? JSONSerialization.data(withJSONObject: [query, candidates])) ?? Data()
+            let headers = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+            let delay: DispatchTimeInterval = query == "slow query" ? .seconds(1) : .milliseconds(0)
+            self.queue.asyncAfter(deadline: .now() + delay) {
+              connection.send(content: Data(headers.utf8) + body, completion: .contentProcessed { _ in connection.cancel() })
+            }
+            return
+          }
         }
         let (status, headers, body): (String, String, String)
         switch path {

@@ -1,0 +1,13 @@
+diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -1982,6 +1982,9 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
+       policy::policy_prefs::kLocalNetworkAccessPermissionsPolicyDefaultEnabled,
+       false);
+ 
++  // Ararat's command bar has one switch across profiles.
++  registry->RegisterBooleanPref(prefs::kSearchSuggestEnabled, true);
++
+   // This is intentionally last.
+   RegisterLocalStatePrefsForMigration(registry);
+ }

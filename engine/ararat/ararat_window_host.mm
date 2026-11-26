@@ -33,10 +33,13 @@
 #include "base/observer_list.h"
 #include "base/process/process.h"
 #include "base/scoped_observation.h"
+#include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/supports_user_data.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "base/timer/timer.h"
+#include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
 #include "base/time/time.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
@@ -60,6 +63,7 @@
 #include "components/history/core/browser/history_types.h"
 #include "chrome/browser/profiles/profile_observer.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
+#include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/sessions/session_service.h"
 #include "chrome/browser/sessions/session_service_factory.h"
 #include "chrome/browser/lifetime/application_lifetime_desktop.h"
@@ -130,6 +134,7 @@
 #include "content/public/browser/visibility.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/storage_partition.h"
+#include "net/base/load_flags.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_partition_key_collection.h"
@@ -143,6 +148,15 @@
 #include "components/find_in_page/find_tab_helper.h"
 #include "components/find_in_page/find_types.h"
 #include "ui/gfx/range/range.h"
+#include "chrome/common/pref_names.h"
+#include "components/omnibox/browser/autocomplete_input.h"
+#include "components/omnibox/browser/remote_suggestions_service.h"
+#include "components/omnibox/browser/search_suggestion_parser.h"
+#include "components/search_engines/template_url.h"
+#include "components/search_engines/template_url_service.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/tabs/public/tab_interface.h"
@@ -337,6 +351,8 @@ bool IsCloseCheck() {
   return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
              "ararat-check") == "close";
 }
+
+uint16_t g_suggest_fixture_port = 0;
 
 bool IsProfileCheck() {
   auto* command = base::CommandLine::ForCurrentProcess();
@@ -1651,6 +1667,9 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
   std::map<std::string, std::unique_ptr<HostedProfile>> profile_keep_alives_;
   std::set<std::string> shown_profiles_;
   BrowserWindowInterface* browser_;
+  base::OneShotTimer suggest_timer_;
+  std::unique_ptr<network::SimpleURLLoader> suggest_loader_;
+  PrefChangeRegistrar suggest_pref_observer_;
   base::CancelableTaskTracker history_queries_;
   base::CancelableTaskTracker favicon_queries_;
   BOOL workspace_page_hidden_;
@@ -2631,6 +2650,184 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
                     @"private": @(profile->IsOffTheRecord()) } : @{};
 }
 
+- (BOOL)searchSuggestionsEnabled {
+  return g_browser_process->local_state()->GetBoolean(prefs::kSearchSuggestEnabled);
+}
+
+- (void)setSearchSuggestionsEnabled:(BOOL)enabled {
+  g_browser_process->local_state()->SetBoolean(prefs::kSearchSuggestEnabled, enabled);
+}
+
+- (void)cancelSearchSuggestions {
+  suggest_timer_.Stop();
+  suggest_loader_.reset();
+}
+
+- (BOOL)checkUseSearchSuggestionFixture:(uint16_t)port {
+  auto* args = base::CommandLine::ForCurrentProcess();
+  if (args->GetSwitchValueASCII("ararat-check") != "search-suggestions" ||
+      !port || !browser_ || [self isPrivateWindow]) {
+    return NO;
+  }
+  auto* service = TemplateURLServiceFactory::GetForProfile(browser_->GetProfile());
+  if (!service) return NO;
+  if (!service->loaded()) {
+    service->Load();
+    return NO;
+  }
+  const std::string base = "http://127.0.0.1:" + std::to_string(port);
+  TemplateURLData data;
+  data.SetShortName(u"Search suggestion fixture");
+  data.SetKeyword(u"suggest-fixture");
+  data.SetURL(base + "/search?q={searchTerms}");
+  data.suggestions_url = base + "/suggest?q={searchTerms}";
+  auto* provider = service->Add(std::make_unique<TemplateURL>(data));
+  if (!provider) return NO;
+  service->SetUserSelectedDefaultSearchProvider(provider);
+  g_suggest_fixture_port = port;
+  return YES;
+}
+
+- (Profile*)profileForSearchSuggestions {
+  if ([self isPrivateWindow] || core_->closing() || core_->closed() ||
+      closing_all_ || closing_window_) {
+    return nullptr;
+  }
+  if (browser_ && !browser_->IsDeleteScheduled()) return browser_->GetProfile();
+  auto it = profile_keep_alives_.find(core_->profile_name());
+  return it != profile_keep_alives_.end() ? it->second->profile.get() : nullptr;
+}
+
+- (void)querySearchSuggestions:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, NSString*>*>*))completion {
+  [self cancelSearchSuggestions];
+  if (![self searchSuggestionsEnabled] || !text.length || text.length > 2048) return;
+  Profile* profile = [self profileForSearchSuggestions];
+  if (!profile) return;
+  ChromeAutocompleteSchemeClassifier classifier(profile);
+  std::u16string query = base::SysNSStringToUTF16(text);
+  query = base::TrimWhitespace(query, base::TRIM_ALL);
+  // Chromium may classify a partial address or relative file path as a query.
+  if (query.empty() || query.find_first_of(u"/\\@:") != std::u16string::npos ||
+      std::ranges::any_of(query, [](char16_t c) { return c < 0x20 || c == 0x7f; })) {
+    return;
+  }
+  constexpr auto page = metrics::OmniboxEventProto::OTHER;
+  AutocompleteInput input(query, page, classifier);
+  const auto dot = query.rfind(u'.');
+  const auto last_space = query.find_last_of(base::kWhitespaceUTF16);
+  if (input.type() == metrics::OmniboxInputType::URL ||
+      (dot != std::u16string::npos &&
+       (last_space == std::u16string::npos ||
+        (dot > last_space && dot + 1 < query.size())))) {
+    return;
+  }
+
+  if (!suggest_pref_observer_.prefs()) {
+    suggest_pref_observer_.Init(g_browser_process->local_state());
+    __weak ARWindowHost* weakSelf = self;
+    suggest_pref_observer_.Add(prefs::kSearchSuggestEnabled, base::BindRepeating(^{
+      [weakSelf cancelSearchSuggestions];
+    }));
+  }
+  __weak ARWindowHost* weakSelf = self;
+  suggest_timer_.Start(FROM_HERE, base::Milliseconds(250), base::BindOnce(^{
+    ARWindowHost* host = weakSelf;
+    if (!host || [host profileForSearchSuggestions] != profile ||
+        ![host searchSuggestionsEnabled]) {
+      return;
+    }
+    auto* service = TemplateURLServiceFactory::GetForProfile(profile);
+    const auto* provider = service ? service->GetDefaultSearchProvider() : nullptr;
+    if (!provider || provider->suggestions_url().empty() ||
+        provider->suggestions_url() == provider->url()) {
+      return;
+    }
+    const auto& terms = service->search_terms_data();
+    if (!provider->suggestions_url_ref().SupportsReplacement(terms) ||
+        !provider->url_ref().SupportsReplacement(terms)) {
+      return;
+    }
+    const GURL endpoint = RemoteSuggestionsService::EndpointUrl(
+        *provider, TemplateURLRef::SearchTermsArgs(query), terms);
+    auto* args = base::CommandLine::ForCurrentProcess();
+    const bool checking = args->HasSwitch("ararat-check") || args->HasSwitch("ararat-screen") ||
+                          args->HasSwitch("ararat-measure");
+    const bool fixture = checking && g_suggest_fixture_port &&
+                         endpoint.SchemeIs("http") && endpoint.host() == "127.0.0.1" &&
+                         endpoint.EffectiveIntPort() == g_suggest_fixture_port;
+    if (!endpoint.is_valid() || endpoint.has_username() || endpoint.has_password() ||
+        (checking ? !fixture : !endpoint.SchemeIs("https"))) {
+      return;
+    }
+
+    auto request = std::make_unique<network::ResourceRequest>();
+    request->url = endpoint;
+    request->load_flags = net::LOAD_DISABLE_CACHE;
+    request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+    request->redirect_mode = network::mojom::RedirectMode::kError;
+    constexpr auto traffic = net::DefineNetworkTrafficAnnotation("ararat_command_bar_suggest", R"(
+      semantics {
+        sender: "Ararat command bar"
+        description: "Provides query suggestions from the default search engine."
+        trigger: "A pause after typing in a regular command bar."
+        data: "The typed search text."
+        destination: WEBSITE
+      }
+      policy {
+        cookies_allowed: NO
+        setting: "Settings > General > Show search suggestions (enabled by default)."
+        policy_exception_justification: "Controls only the Ararat command bar."
+      })");
+    host->suggest_loader_ = network::SimpleURLLoader::Create(std::move(request), traffic);
+    host->suggest_loader_->SetTimeoutDuration(base::Seconds(5));
+    const GURL search_template = provider->GenerateSearchURL(terms);
+    auto factory = profile->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess();
+    host->suggest_loader_->DownloadToString(factory.get(), base::BindOnce(^(
+        std::optional<std::string> body) {
+      ARWindowHost* current = weakSelf;
+      if (!current) return;
+      auto loader = std::move(current->suggest_loader_);
+      if (!body || [current profileForSearchSuggestions] != profile ||
+          ![current searchSuggestionsEnabled]) {
+        return;
+      }
+      auto* active_service = TemplateURLServiceFactory::GetForProfile(profile);
+      const auto* active_provider = active_service ? active_service->GetDefaultSearchProvider() : nullptr;
+      if (!active_provider) return;
+      const auto& active_terms = active_service->search_terms_data();
+      if (search_template != active_provider->GenerateSearchURL(active_terms) ||
+          endpoint != RemoteSuggestionsService::EndpointUrl(
+              *active_provider, TemplateURLRef::SearchTermsArgs(query), active_terms)) {
+        return;
+      }
+      auto data = SearchSuggestionParser::DeserializeJsonData(
+          SearchSuggestionParser::ExtractJsonData(loader.get(), std::move(body)));
+      if (!data) return;
+      ChromeAutocompleteSchemeClassifier active_classifier(profile);
+      SearchSuggestionParser::Results results;
+      SearchSuggestionParser::ParseSuggestResultsOptions options;
+      options.search_engine_type = active_provider->GetEngineType(active_terms);
+      if (!SearchSuggestionParser::ParseSuggestResults(*data, input, active_classifier,
+              -1, false, options, &results)) {
+        return;
+      }
+      NSMutableArray* rows = [NSMutableArray array];
+      std::set<std::u16string> seen{query};
+      for (const auto& result : results.suggest_results) {
+        const auto& suggestion = result.suggestion();
+        if (!seen.insert(suggestion).second) continue;
+        const GURL url(active_provider->url_ref().ReplaceSearchTerms(
+            TemplateURLRef::SearchTermsArgs(suggestion), active_terms));
+        if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) continue;
+        [rows addObject:@{@"title": base::SysUTF16ToNSString(suggestion),
+                          @"url": base::SysUTF8ToNSString(url.spec())}];
+        if (rows.count == 3) break;
+      }
+      completion(rows);
+    }), 64 * 1024);
+  }));
+}
+
 - (void)queryHistory:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, id>*>*))completion {
   history_queries_.TryCancelAll();
   if (!browser_ || browser_->IsDeleteScheduled() || [self isPrivateWindow] || !text.length) {
@@ -3019,7 +3216,8 @@ AraratWindowHostCreate(NSView* contentView, NSString* windowId) {
 
 - (void)checkCreateIncognito {
   const auto screen = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-screen");
-  if ((IsProfileCheck() || screen == "tab-switcher") && browser_)
+  const auto check = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("ararat-check");
+  if ((IsProfileCheck() || check == "search-suggestions" || screen == "tab-switcher") && browser_)
     chrome::NewIncognitoWindow(browser_->GetProfile());
 }
 
