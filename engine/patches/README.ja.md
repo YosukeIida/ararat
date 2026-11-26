@@ -53,6 +53,7 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 | `ararat/viewless-read-anything.patch` | 独自 |
 | `ararat/viewless-bubble-anchor.patch` | 独自 |
 | `ararat/sad-tab-viewless.patch` | 独自、Ardia に同じガードがある |
+| `ararat/ssl-interstitial-layout.patch` | 独自 |
 | `ararat/keyboard-ime-diagnostics.patch` | 独自 |
 | `ararat/find-close-command.patch` | 独自 |
 | `ararat/hidden-dialog-containment.patch` | 独自 |
@@ -62,6 +63,11 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 | `ararat/history-retention.patch` | 独自 |
 | `ararat/command-line-urls-hook.patch` | 独自 |
 | `ararat/native-editor-ime.patch` | 独自 |
+| `ararat/password-manager.patch` | 独自 |
+| `ararat/password-prompt.patch` | 独自 |
+| `ararat/password-prompt-trace.patch` | 独自 |
+| `ararat/passwords-touch-id-check.patch` | 独自 |
+| `ararat/menu-bar.patch` | 独自。Araratのメニュー名を定義し、ChromiumのHistory、Bookmarks、Profilesの各メニューとコントローラ、タブ一覧のコントローラの生成を省く。BackとForwardはViewに置く |
 
 ## 取り込んだパッチを選んだ理由
 

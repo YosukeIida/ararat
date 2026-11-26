@@ -3,7 +3,7 @@ import AraratEngineAPI
 import AraratKit
 import AraratUI
 
-/// U27j's check: the onboarding window opened by the command the File menu and the command bar
+/// U27j's check: the onboarding window opened by the command Settings and the command bar
 /// carry under a check. It walks the eight screens — welcome, source, what to import, default
 /// browser, progress, done, the stopped import and the sibling-file warning — through the
 /// window's own buttons, captures each, and asserts that the report's numbers are the showcase
@@ -20,7 +20,7 @@ final class FakeDefaultBrowserSetter: DefaultBrowserSetter {
 @MainActor
 final class OnboardingCheckState {
     static let conditions = [
-        "window_open", "window_size", "entry_menu", "entry_command_bar",
+        "window_open", "window_size", "entry_settings", "entry_command_bar",
         "welcome", "welcome_buttons", "source_rows", "source_later", "space_rows", "also_rows",
         "no_signin_rows", "default_browser", "setter_called", "real_default_unchanged",
         "progress_steps", "report_numbers", "report_lines", "no_signin_line",
@@ -138,10 +138,6 @@ extension Runtime {
         switch browserCheckPhase {
         case 0:
             guard workspace != nil, quitPath != nil else { wait("workspace"); return }
-            let menuItem = NSApp.mainMenu?.item(withTitle: "File")?.submenu?.items.first {
-                $0.identifier?.rawValue == OnboardingCommandStore.commandID
-            }
-            mark("entry_menu", menuItem != nil && menuItem?.action == #selector(Runtime.importFromArc(_:)))
             check.realDefaultBefore = onboardingDefaultHandler()
             // The command bar's own path, so removing the decorator line in main.swift fails here.
             openCommandBar(.newTab)
@@ -159,10 +155,19 @@ extension Runtime {
             }
             mark("entry_command_bar", rows.contains { $0.title == "Import from Arc…" })
             presenter.close()
-            openOnboarding()
+            openSettings()
+            (root ?? self).settings?.checkProbe()?.openGeneralPane()
+            (root ?? self).settings?.window?.makeKeyAndOrderFront(nil)
+            browserCheckPhase = 12
+        case 12:
+            guard let settings = (root ?? self).settings, let settingsProbe = settings.checkProbe() else { wait("Settings"); return }
+            settingsProbe.layout()
+            guard settingsProbe.pressArcImport() else { wait("Import from Arc button"); return }
             browserCheckPhase = 2
         case 2:
             guard let probe = probe(), probe.stage == .welcome else { wait("welcome"); return }
+            owner.settings?.window?.orderOut(nil)
+            mark("entry_settings", true)
             let size = probe.contentSize
             mark("window_open", true)
             mark("window_size", abs(size.width - OnboardingMetrics.size.width) <= 1

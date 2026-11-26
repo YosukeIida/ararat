@@ -1534,7 +1534,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
     container.onHeaderCommand = { [weak self, weak host] command in
       if command == "settings" { self?.openSettings() }
       // U27b: the header's two site commands are core commands now, so its ids go through the
-      // one dispatcher the Ararat Commands menu, the command bar and a recorded key use.
+      // one dispatcher the main menu, the command bar and a recorded key use.
       else if command == "clear_cache_site" || command == "clear_cookies_site" { self?.performWorkspaceCommand(command) }
       else { _ = host?.runCommand(command) }
     }
@@ -2519,6 +2519,7 @@ final class Runtime: NSObject, NSMenuItemValidation {
                                preview: preview, keyBindings: keyBindings, airTraffic: airTraffic)
     }
     owner.settingsOwner = self
+    owner.settings?.setArcImport(Runtime.onboardingEntryVisible ? { [weak self] in self?.openOnboarding() } : nil)
     let shownProfile = (spaceID ?? snapshot.shownSpaceId).flatMap { id in
       snapshot.spaces.first(where: { $0.id == id })?.profileName
     }
@@ -2635,77 +2636,121 @@ final class Runtime: NSObject, NSMenuItemValidation {
     }
   }
 
-  /// U27b: the ids the Ararat Commands menu carries; CoreMenuTests checks every one is a table command.
-  static let coreMenuCommandIDs = ["clear_archive", "cycle_tabs_next", "cycle_tabs_previous", "focus_next_pane", "focus_previous_pane", "add_split_view", "force_reload", "clear_cache_site", "clear_cookies_site", "pin_tab", "copy_link", "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library", "reset_sidebar_width"] + (1...9).flatMap { ["show_space_\($0)", "move_to_space_\($0)"] }
-
   func installCoreMenu() {
     guard !coreMenuInstalled, let menu = NSApp.mainMenu else { return }
     coreMenuInstalled = true
-    if let edit = menu.item(withTitle: "Edit")?.submenu {
+    let bindings = defaultKeyBindings()
+    let app = menu.items.first?.submenu
+    let file = menu.item(withTag: 57326)?.submenu // IDC_FILE_MENU
+    let edit = menu.item(withTag: 57343)?.submenu // IDC_EDIT_MENU
+    let viewItem = menu.item(withTag: 57327) // IDC_VIEW_MENU
+    let view = viewItem?.submenu
+    let tabsItem = menu.item(withTag: 57323) // IDC_TAB_MENU
+
+    let moved = Set([
+      "clear_archive", "cycle_tabs_next", "cycle_tabs_previous", "focus_next_pane", "focus_previous_pane",
+      "add_split_view", "force_reload", "clear_cache_site", "clear_cookies_site", "pin_tab", "copy_link",
+      "duplicate", "new_folder", "rename", "delete_folder", "toggle_sidebar", "toggle_library",
+      "reset_sidebar_width", "reopen_closed_tab",
+    ])
+    displacedMenuItems = KeyBindingsModel.clearCollisions(bindings.filter { moved.contains($0.command) }, in: menu)
+
+    func bind(_ item: NSMenuItem, _ command: String, shortcut: Bool = true) {
+      if displacedMenuItems[command] === item {
+        displacedMenuItems[command] = item.copy() as? NSMenuItem
+      }
+      item.target = self
+      item.action = #selector(coreMenuCommand(_:))
+      item.representedObject = command
+      if shortcut {
+        item.identifier = NSUserInterfaceItemIdentifier(command)
+        KeyBindingsModel.setCoreMenuShortcut(bindings.first { $0.command == command }?.key, on: item)
+      }
+    }
+
+    func command(_ id: String, title: String? = nil, shortcut: Bool = true) -> NSMenuItem {
+      let item = NSMenuItem(title: title ?? bindings.first { $0.command == id }!.title, action: nil, keyEquivalent: "")
+      bind(item, id, shortcut: shortcut)
+      return item
+    }
+
+    func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
+      let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+      let children = NSMenu(title: title)
+      for child in items { children.addItem(child) }
+      item.submenu = children
+      return item
+    }
+
+    if let settings = app?.item(withTag: 40015) { bind(settings, "settings") } // IDC_OPTIONS
+    if let file, let reopen = file.item(withTag: 34028) { // IDC_RESTORE_TAB
+      bind(reopen, "reopen_closed_tab")
+      let little = NSMenuItem(title: "New Little Window", action: #selector(newLittleWindow(_:)), keyEquivalent: "")
+      little.target = self
+      little.identifier = NSUserInterfaceItemIdentifier("new_little_window")
+      file.insertItem(little, at: file.index(of: reopen))
+    }
+    if let edit {
       // Why not ⌘Z: the page's editable first responder must keep its own undo.
       let undo = NSMenuItem(title: "Undo Clear Tabs", action: #selector(undoClearTabs(_:)), keyEquivalent: "")
       undo.target = self
       edit.insertItem(undo, at: min(1, edit.items.count))
+      edit.addItem(.separator())
+      edit.addItem(command("copy_link"))
     }
-    let ids = Self.coreMenuCommandIDs
-    let bindings = defaultKeyBindings().filter { ids.contains($0.command) }
-    let appMenu = menu.items.first?.submenu
-    if let settingsItem = appMenu?.items.first(where: { $0.action == NSSelectorFromString("showPreferences:") }),
-       let binding = defaultKeyBindings().first(where: { $0.command == "settings" }) {
-      settingsItem.target = self
-      settingsItem.action = #selector(coreMenuCommand(_:))
-      settingsItem.representedObject = "settings"
-      settingsItem.identifier = NSUserInterfaceItemIdentifier("settings")
-      KeyBindingsModel.setCoreMenuShortcut(binding.key, on: settingsItem)
+    if let view, let viewItem {
+      for (index, item) in [command("toggle_sidebar"), command("toggle_library"), command("reset_sidebar_width"), .separator()].enumerated() {
+        view.insertItem(item, at: index)
+      }
+      if let reload = view.item(withTag: 33007) { // IDC_RELOAD_BYPASSING_CACHE
+        reload.isAlternate = false
+        bind(reload, "force_reload")
+        let index = view.index(of: reload)
+        view.insertItem(command("clear_cache_site"), at: index + 1)
+        view.insertItem(command("clear_cookies_site"), at: index + 2)
+      }
+      let go = submenu("Go to Space", (1...9).map { command("show_space_\($0)", title: "\($0)") })
+      menu.insertItem(submenu("Spaces", [go]), at: menu.index(of: viewItem) + 1)
     }
-    displacedMenuItems = KeyBindingsModel.clearCollisions(bindings + defaultKeyBindings().filter { $0.command == "reopen_closed_tab" }, in: menu)
-    let core = NSMenu(title: "Ararat Commands")
-    for binding in bindings {
-      let item = core.addItem(withTitle: binding.title, action: #selector(coreMenuCommand(_:)), keyEquivalent: binding.key?.key ?? "")
-      item.target = self
-      item.representedObject = binding.command
-      item.identifier = NSUserInterfaceItemIdentifier(binding.command)
-      KeyBindingsModel.setCoreMenuShortcut(binding.key, on: item)
+    if let tabsItem, let tabs = tabsItem.submenu {
+      tabsItem.title = "Tabs"
+      tabs.title = "Tabs"
+      tabs.insertItem(command("cycle_tabs_next"), at: 0)
+      tabs.insertItem(command("cycle_tabs_previous"), at: 1)
+      if let mute = tabs.item(withTag: 35012) { // IDC_WINDOW_MUTE_SITE
+        let index = tabs.index(of: mute)
+        tabs.insertItem(.separator(), at: index)
+        tabs.insertItem(command("pin_tab"), at: index + 1)
+        tabs.insertItem(command("duplicate"), at: index + 2)
+      }
+      if let move = tabs.item(withTag: 34056) { // IDC_MOVE_TAB_TO_NEW_WINDOW
+        let index = tabs.index(of: move)
+        tabs.insertItem(.separator(), at: index)
+        tabs.insertItem(submenu("Move to Space", (1...9).map { command("move_to_space_\($0)", title: "\($0)") }), at: index + 1)
+      }
+      for item in [
+        .separator(), command("add_split_view"), command("focus_next_pane"), command("focus_previous_pane"),
+        .separator(), command("new_folder"), command("rename"), command("delete_folder"),
+      ] { tabs.addItem(item) }
+      let archive = submenu("Archive", [command("toggle_library", title: "Show Library", shortcut: false), command("clear_archive")])
+      menu.insertItem(archive, at: menu.index(of: tabsItem) + 1)
     }
-    let coreItem = menu.addItem(withTitle: "Ararat Commands", action: nil, keyEquivalent: "")
-    coreItem.tag = 0x4152434d
-    coreItem.submenu = core
-    // Why not Tab: reuse Chromium's File item so a second ⇧⌘T item cannot invoke its tab restore.
-    if let file = menu.item(withTitle: "File")?.submenu,
-       let binding = defaultKeyBindings().first(where: { $0.command == "reopen_closed_tab" }) {
-      let item = file.items.first(where: { $0.title == "Reopen Closed Tab" })
-        ?? file.addItem(withTitle: binding.title, action: nil, keyEquivalent: "")
-      item.target = self
-      item.action = #selector(coreMenuCommand(_:))
-      item.representedObject = binding.command
-      item.identifier = NSUserInterfaceItemIdentifier(binding.command)
-      KeyBindingsModel.setCoreMenuShortcut(binding.key, on: item)
+    if let help = menu.items.compactMap({ $0.submenu?.item(withTag: 40020) }).first { // IDC_HELP_PAGE_VIA_MENU
+      help.target = self
+      help.action = #selector(openAraratHelp(_:))
     }
     keyBindings?.register(menu)
-    // U27h: the Little Window's menu entry. Its own block so the other U27 branches' command
-    // additions merge without touching it.
-    if let file = menu.item(withTitle: "File")?.submenu {
-      let little = NSMenuItem(title: "New Little Window", action: #selector(newLittleWindow(_:)), keyEquivalent: "")
-      little.target = self
-      little.identifier = NSUserInterfaceItemIdentifier("new_little_window")
-      let index = file.items.firstIndex { $0.action == NSSelectorFromString("newIncognitoWindow:") }.map { $0 + 1 } ?? 0
-      file.insertItem(little, at: index)
-      // Why not register this as a core command: a Swift-only entry can stay out of Shortcuts.
-      if Runtime.onboardingEntryVisible {
-        let onboarding = NSMenuItem(title: "Import from Arc…", action: #selector(importFromArc(_:)), keyEquivalent: "")
-        onboarding.target = self
-        onboarding.identifier = NSUserInterfaceItemIdentifier(OnboardingCommandStore.commandID)
-        file.insertItem(onboarding, at: index + 1)
-      }
-    }
   }
 
-  @objc func importFromArc(_ sender: Any?) {
-    let owner = root ?? self
-    let windows = [owner] + owner.children
-    let key = windows.first { $0.host?.window().isKeyWindow == true }
-    Runtime.commandWindow(key: key, regular: windows.filter { $0.hasUsableHost && !$0.isPrivateWindow }, root: owner)
-      .openOnboarding()
+  @objc func openAraratHelp(_ sender: NSMenuItem) {
+    let url = "https://github.com/YosukeIida/ararat#readme"
+    let windows = (root ?? self).windowTree.filter(\.hasUsableHost)
+    if let target = windows.first(where: { $0.host?.window().isKeyWindow == true }) ?? windows.first,
+       let host = target.host, let adapter = target.adapter {
+      adapter.openCommandURL(url, expectedSpace: target.snapshot.shownSpaceId, profile: host.profileDirectory())
+    } else if let address = URL(string: url) {
+      NSWorkspace.shared.open(address)
+    }
   }
 
   @objc func coreMenuCommand(_ item: NSMenuItem) {
@@ -2735,9 +2780,6 @@ final class Runtime: NSObject, NSMenuItemValidation {
     let owner = root ?? self
     let target = ([owner] + owner.children).first { $0.host?.window().isKeyWindow == true }
     if let target, target.isPrivateWindow {
-      // The core rejects import into a private workspace; a private workspace has no pins,
-      // folders, duplicates, other spaces or moves either.
-      if item.title.range(of: "import", options: .caseInsensitive) != nil { return false }
       if item.action == #selector(coreMenuCommand(_:)), let command = item.representedObject as? String,
          !privateWorkspaceCommands.contains(command) {
         return false
@@ -4982,6 +5024,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
           keyboardResults["core_menu_library"] as? Bool == true && keyboardResults["core_menu_reset_width"] as? Bool == true &&
           keyboardResults["core_menu_pin"] as? Bool == true && keyboardResults["core_menu_space"] as? Bool == true && keyboardResults["core_menu_settings"] as? Bool == true &&
           keyboardResults["page_menu_settings"] as? Bool == true && keyboardResults["app_menu_settings"] as? Bool == true && keyboardResults["engine_settings"] as? Bool == true &&
+          keyboardResults["menu_forward"] as? Bool == true &&
           keyboardResults["extension_reserved_priority"] as? Bool == true &&
           keyboardResults["own_field_noncommand"] as? Bool == true &&
           keyboardResults["chooser_screenshot"] != nil && keyboardResults["restore_screenshot"] != nil
@@ -5118,8 +5161,24 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       guard tab.navigationCount > keyboardNavigation, !tab.isLoading else { return }
       keyboardResults["reload"] = true
       guard let save = displacedMenuItems["toggle_sidebar"], save.keyEquivalent.isEmpty,
-            let bookmark = displacedMenuItems["pin_tab"], bookmark.keyEquivalent.isEmpty,
-            let library = displacedMenuItems["toggle_library"], library.keyEquivalent.isEmpty else { fail("core menu collision"); return }
+            displacedMenuItems["pin_tab"] == nil, displacedMenuItems["toggle_library"] == nil else {
+        fail("core menu collision"); return
+      }
+      if let menu = NSApp.mainMenu {
+        func dump(_ menu: NSMenu) -> [[String: Any]] {
+          menu.items.filter { !$0.isHidden }.map { item in
+            var row: [String: Any] = [
+              "title": item.isSeparatorItem ? "—" : item.title,
+              "key": item.keyEquivalent,
+              "modifiers": item.keyEquivalentModifierMask.rawValue,
+              "alternate": item.isAlternate,
+            ]
+            if let submenu = item.submenu { row["items"] = dump(submenu) }
+            return row
+          }
+        }
+        keyboardResults["menu_bar"] = dump(menu)
+      }
       keyboardResults["core_menu_collision"] = true
       if screen && keyboardResults["extension_reserved_priority"] as? Bool != true {
         guard host.checkReassignProbeCommand(true) else { fail("reassign extension shortcut"); return }
@@ -5155,7 +5214,7 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
       container.resizeHandle.resetWidth()
       let defaultWidth = container.resizeHandle.sidebarWidth
       container.resizeHandle.sidebarWidth = defaultWidth + 40
-      guard let item = NSApp.mainMenu?.item(withTitle: "Ararat Commands")?.submenu?.items.first(where: {
+      guard let item = NSApp.mainMenu?.item(withTitle: "View")?.submenu?.items.first(where: {
         $0.representedObject as? String == "reset_sidebar_width"
       }), let action = item.action, NSApp.sendAction(action, to: item.target, from: item),
             container.resizeHandle.sidebarWidth == defaultWidth else { fail("reset width menu"); return }
@@ -5412,9 +5471,19 @@ static func dispatchPopupCheck(mode: String, phase: Int, devtools: () -> Void, r
     case 11:
       guard tab.url == baseURL, !tab.isLoading else { return }
       keyboardResults["back"] = true
+      if screen && keyboardResults["menu_forward"] == nil {
+        send("forward", "]", 30)
+        browserCheckPhase = 110
+        return
+      }
       host.checkSetFindPasteboard("ararat-find")
       send("find", "f", 3)
       browserCheckPhase = 12
+    case 110:
+      guard tab.url == baseURL + "?second", !tab.isLoading else { return }
+      keyboardResults["menu_forward"] = true
+      send("back", "[", 33)
+      browserCheckPhase = 11
     case 12:
       guard let find = container?.findBar, !find.isHidden else { return }
       guard find.field.stringValue == "ararat-find", host.checkCloseFindEnabled() else { fail("find pasteboard or command state"); return }
