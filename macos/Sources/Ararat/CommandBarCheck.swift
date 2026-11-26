@@ -11,6 +11,7 @@ extension Runtime {
   func commandBarCheckResult(screen: Bool) -> [String: Any] {
     var conditions = Dictionary(uniqueKeysWithValues: commandBarConditionNames.map { ($0, commandBarConditions[$0] == true) })
     if screen {
+      for name in ["marked_text", "marked_commands", "marked_commit"] { conditions[name] = commandBarConditions[name] == true }
       conditions["capture"] = ["search", "settings", "open-url", "recent", "edit-url", "tab-switcher"]
         .allSatisfy { commandBarImages[$0] != nil }
     }
@@ -95,6 +96,35 @@ extension Runtime {
       step(4, "open history query")
     case 4:
       guard let presenter = commandPresenter, presenter.controller.isOpen else { return }
+      if screen {
+        guard let editor = presenter.view.field.currentEditor() as? NSTextView else { return }
+        editor.setMarkedText("どら", selectedRange: NSRange(location: 2, length: 0), replacementRange: editor.selectedRange())
+        step(41, "set marked text")
+        return
+      }
+      guard setQuery("keyboard", presenter) else { return }
+      step(5, "query history")
+    case 41:
+      guard let presenter = commandPresenter, let editor = presenter.view.field.currentEditor() as? NSTextView else { return }
+      let bar = presenter.controller
+      guard editor.hasMarkedText(), bar.result.rows.first?.title == "どら" else { return }
+      let query = "どらえもん"
+      editor.setMarkedText(query, selectedRange: NSRange(location: query.utf16.count, length: 0), replacementRange: editor.markedRange())
+      let rows = bar.result.rows
+      let generation = bar.queryGeneration
+      let selection = bar.selectedIndex
+      if let first = rows.first, case .search = first.target {
+        commandBarConditions["marked_text"] = editor.hasMarkedText() && bar.query == query && first.title == query
+      }
+      for selector in [#selector(NSResponder.moveUp(_:)), #selector(NSResponder.moveDown(_:)),
+                       #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.cancelOperation(_:))] {
+        editor.doCommand(by: selector)
+      }
+      commandBarConditions["marked_commands"] = bar.isOpen && editor.hasMarkedText()
+        && bar.result.rows == rows && bar.selectedIndex == selection && bar.queryGeneration == generation
+      editor.insertText(query, replacementRange: editor.markedRange())
+      commandBarConditions["marked_commit"] = !editor.hasMarkedText() && editor.string == query
+        && bar.query == query && bar.result.rows == rows && bar.selectedIndex == selection && bar.queryGeneration == generation
       guard setQuery("keyboard", presenter) else { return }
       step(5, "query history")
     case 5:
