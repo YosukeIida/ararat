@@ -47,6 +47,7 @@ public enum CommandBarMetrics {
     static let hintPaddingY: CGFloat = 4
     /// At most 5 rows [Cra, SuggestionEngine.swift:62].
     public static let maxRows = 5
+    static let maxSearchSuggestions = 3
 
     /// height = 60 + n·50 + (n−1)·2 + 20, 60 with no rows [Cra, CommandBarView.swift:10-12].
     public static func height(forRows rows: Int) -> CGFloat {
@@ -62,7 +63,7 @@ public enum CommandBarMetrics {
     static func panelFrame(windowFrame: NSRect, pageFrame: NSRect, rows: Int, privateWindow: Bool, hintHeight: CGFloat) -> NSRect {
         let noteHeight: CGFloat = privateWindow ? 32 : 0
         let barHeight = height(forRows: rows) + noteHeight
-        let reserve = height(forRows: maxRows) + noteHeight + hintOffset + hintHeight
+        let reserve = height(forRows: max(maxRows, rows)) + noteHeight + hintOffset + hintHeight
         let top = windowFrame.maxY - min(topInset, max(0, windowFrame.height - reserve))
         let width = min(cappedWidth(windowWidth: windowFrame.width), pageFrame.width)
         return NSRect(x: pageFrame.midX - width / 2, y: top - barHeight, width: width, height: barHeight)
@@ -125,6 +126,10 @@ public final class CommandBarController {
     public var privateWindow = false
     public var onQuery: (String, Int) -> Void = { _, _ in }
     public private(set) var queryGeneration = 0
+    public var onSuggestionQuery: (String?, Int) -> Void = { _, _ in }
+    public private(set) var localRowCount = 0
+    var searchSuggestionCapacity: (Int) -> Int = { _ in CommandBarMetrics.maxSearchSuggestions }
+    private var searchSuggestions: [Suggestion] = []
     private var history: [HistoryEntry] = []
     /// Return (or ⌘Return) pressed while the store is pending: the bar stays open and the
     /// commit runs when `applyStore` lands, so the typed text is not dropped in the adapter
@@ -156,6 +161,7 @@ public final class CommandBarController {
         self.store = store
         storeReadyAtSubmission = false
         history = []
+        searchSuggestions = []
         self.mode = mode
         query = prefill ?? ""
         fieldText = query
@@ -185,17 +191,31 @@ public final class CommandBarController {
 
     public func update(query newQuery: String) {
         query = newQuery
+        searchSuggestions = []
         selectedIndex = 0
         previewText = nil
         relist()
         queryGeneration += 1
         onQuery(newQuery, queryGeneration)
+        onSuggestionQuery(newQuery, queryGeneration)
     }
 
     public func updateHistory(_ entries: [HistoryEntry], for text: String) {
         guard isOpen, query == text, !privateWindow else { return }
         let selected = result.rows.indices.contains(selectedIndex) ? result.rows[selectedIndex].target : nil
         history = entries
+        relist(preserving: selected)
+    }
+
+    func refreshSearchSuggestionLayout() {
+        guard !searchSuggestions.isEmpty else { return }
+        updateSearchSuggestions(searchSuggestions, generation: queryGeneration)
+    }
+
+    public func updateSearchSuggestions(_ suggestions: [Suggestion], generation: Int) {
+        guard isOpen, !privateWindow, queryGeneration == generation else { return }
+        let selected = result.rows.indices.contains(selectedIndex) ? result.rows[selectedIndex].target : nil
+        searchSuggestions = suggestions
         relist(preserving: selected)
     }
 
@@ -221,6 +241,12 @@ public final class CommandBarController {
             result.rows.insert(row, at: min(1, result.rows.count))
         }
         result.rows = Array(result.rows.prefix(CommandBarMetrics.maxRows))
+        localRowCount = result.rows.count
+        if store != nil, !privateWindow, !searchSuggestions.isEmpty {
+            let localTargets = result.rows.map(\.target)
+            result.rows += searchSuggestions.filter { !localTargets.contains($0.target) }
+                .prefix(searchSuggestionCapacity(localRowCount))
+        }
         self.result = result
         if let selected {
             if let index = result.rows.firstIndex(where: { $0.target == selected }) { selectedIndex = index }
@@ -236,7 +262,8 @@ public final class CommandBarController {
         let count = result.rows.count
         selectedIndex = ((selectedIndex + delta) % count + count) % count
         // The top row is what was typed.
-        previewText = selectedIndex == 0 ? nil : fillText(for: result.rows[selectedIndex])
+        let row = result.rows[selectedIndex]
+        previewText = selectedIndex >= localRowCount ? row.title : selectedIndex == 0 ? nil : fillText(for: row)
         previewVersion += 1
         onChange()
     }
@@ -281,6 +308,7 @@ public final class CommandBarController {
     public func close() {
         guard isOpen else { return }
         isOpen = false
+        onSuggestionQuery(nil, queryGeneration)
         // A close in the gap (Esc, click-away) cancels the pending commit.
         pendingCommitForceNewTab = nil
         // Dropping the store drops the session's index (built once per open).

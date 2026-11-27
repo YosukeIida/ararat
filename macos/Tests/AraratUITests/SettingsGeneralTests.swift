@@ -186,7 +186,7 @@ func theGeneralPaneDrawsItsRowsAndTheSearchCarriesThem() async throws {
     defer { window.contentViewController = nil }
     let probe = try #require(controller.checkProbe())
     let rows = [SettingsModel.defaultBrowserRowID, SettingsModel.startupRowID,
-                SettingsModel.warnBeforeQuittingRowID, SettingsModel.downloadsFolderRowID, SettingsModel.downloadsAskRowID]
+                SettingsModel.warnBeforeQuittingRowID, SettingsModel.searchSuggestionsRowID, SettingsModel.downloadsFolderRowID, SettingsModel.downloadsAskRowID]
     try await waitUntil {
         probe.layout()
         return rows.allSatisfy { probe.marker(SettingsModel.rowMarker($0)) != nil }
@@ -201,11 +201,12 @@ func theGeneralPaneDrawsItsRowsAndTheSearchCarriesThem() async throws {
     #expect(probe.railPanes.first?.id == "general")
     let searchRows = SettingsRegistry.generalRows(model)
     #expect(searchRows.map(\.title) == ["Default browser", "When Ararat opens", "Warn before quitting",
-                                        "Save downloads to", "Ask where to save each file"])
+                                        "Show search suggestions", "Save downloads to", "Ask where to save each file"])
     #expect(searchRows[1].subtitle == "Restore windows and tabs")
     #expect(searchRows[2].subtitle == "On")
-    #expect(searchRows[3].subtitle == "Downloads")
-    #expect(searchRows[4].subtitle == "Off")
+    #expect(searchRows[3].subtitle == "On")
+    #expect(searchRows[4].subtitle == "Downloads")
+    #expect(searchRows[5].subtitle == "Off")
     model.setWarnBeforeQuitting(false)
     try await waitUntil { !model.warnBeforeQuitting }
     model.readGeneral()

@@ -213,6 +213,7 @@ source_set("entry") {
     "//chrome/browser:global_keyboard_shortcuts_mac",
     "//chrome/browser:main_extra_parts",
     "//chrome/browser/browsing_data:constants",
+    "//chrome/browser/autocomplete",
     "//chrome/browser/autofill",
     "//chrome/browser/password_manager",
     "//chrome/browser/devtools",
@@ -246,8 +247,11 @@ source_set("entry") {
     "//chrome/browser/prefs",
     "//chrome/browser/prefs:util",
     "//chrome/browser/prefs:util_impl",
+    "//chrome/browser/search_engines",
     "//chrome/browser/sessions",
     "//chrome/browser/sessions:impl",
+    "//components/omnibox/browser",
+    "//components/search_engines",
     "//components/history/core/browser",
     "//chrome/browser/themes",
     "//chrome/browser/ui:browser_window_header",
@@ -340,6 +344,7 @@ source_set("entry") {
     "//extensions/common",
     "//extensions/common:extension_features",
     "//net",
+    "//services/network/public/cpp",
     "//services/network/public/mojom:cookies_mojom",
   ]
   if (ararat_touch_id_check) {

@@ -53,6 +53,16 @@ struct SettingsGeneralSection: View {
                     .toggleStyle(.switch).labelsHidden().fixedSize()
                 }.id(SettingsModel.warnBeforeQuittingRowID)
             }
+            SettingsGroupCard {
+                SettingsCardRow(first: true, hit: model.highlighted == SettingsModel.searchSuggestionsRowID,
+                                marker: SettingsModel.rowMarker(SettingsModel.searchSuggestionsRowID)) {
+                    SettingsRowLabel(title: "Show search suggestions", subtitle: "Sends typed searches to your default search engine.")
+                    Toggle("Show search suggestions", isOn: Binding(
+                        get: { model.searchSuggestionsEnabled }, set: model.setSearchSuggestionsEnabled
+                    ))
+                    .toggleStyle(.switch).labelsHidden().fixedSize()
+                }.id(SettingsModel.searchSuggestionsRowID)
+            }
             if let action = model.importFromArc {
                 SettingsGroupCard {
                     SettingsCardRow(first: true, hit: false) {

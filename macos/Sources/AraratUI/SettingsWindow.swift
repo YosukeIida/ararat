@@ -166,6 +166,10 @@ public final class SettingsWindowController: NSWindowController {
         model.chooseDownloadFolder = { [weak self] in self?.chooseDownloadFolder() }
     }
 
+    public func configureSearchSuggestions(enabled: Bool, write: @escaping (Bool) -> Bool) {
+        model.configureSearchSuggestions(enabled: enabled, write: write)
+    }
+
     /// P5b: the folder row's Choose… — the system's own panel over the settings window. A
     /// cancelled panel writes nothing, so the stored folder stays what the pane shows.
     public func chooseDownloadFolder() {

@@ -343,6 +343,9 @@ typedef struct {
 // checks read it, and so does `settings-general` (P5b): the pane's folder and switch are only
 // proved to reach Chromium by reading them back here.
 - (NSDictionary<NSString*, id>*)downloadsCheckSettings;
+- (void)querySearchSuggestions:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, NSString*>*>*))completion;
+- (void)cancelSearchSuggestions;
+- (BOOL)checkUseSearchSuggestionFixture:(uint16_t)port;
 - (void)queryHistory:(NSString*)text completion:(void (^)(NSArray<NSDictionary<NSString*, id>*>*))completion;
 - (void)checkKeyboardCommand:(NSString*)command;
 - (void)checkSetFindPasteboard:(NSString*)text;
@@ -474,6 +477,10 @@ void AraratApplyPrivacySettings(NSDictionary<NSString*, id>* settings);
 // regular profile's folder without a prompt, so nothing is written to them.
 __attribute__((visibility("default")))
 void AraratApplyDownloadSettings(NSString* directory, BOOL prompt);
+__attribute__((visibility("default")))
+BOOL AraratSearchSuggestionsEnabled(void);
+__attribute__((visibility("default")))
+void AraratSetSearchSuggestionsEnabled(BOOL enabled);
 // P4: clears the chosen types (1 history, 2 cookies and other site data, 4 cached images and
 // files) for the range in one profile, through one BrowsingDataRemover task. The begin is
 // seconds since 1970 (0 is the beginning of time) and the end is Chromium's Time::Max(), as its

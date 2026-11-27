@@ -27,10 +27,12 @@ _AraratPurgeTabHistory
 _AraratQuit
 _AraratRemoveExtension
 _AraratReviewExtension
+_AraratSearchSuggestionsEnabled
 _AraratSetExtensionEnabled
 _AraratSetExtensionPinned
 _AraratSetExtensionSiteAccess
 _AraratSetExtensionsChangedHandler
+_AraratSetSearchSuggestionsEnabled
 _AraratSetSiteException
 _AraratSiteExceptions
 _AraratStartMeasure

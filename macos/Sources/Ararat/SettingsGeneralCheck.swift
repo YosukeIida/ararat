@@ -48,7 +48,7 @@ extension Runtime {
         switch check.phase {
         case 2:
             let rows = [SettingsModel.defaultBrowserRowID, SettingsModel.startupRowID,
-                        SettingsModel.downloadsFolderRowID, SettingsModel.downloadsAskRowID]
+                        SettingsModel.searchSuggestionsRowID, SettingsModel.downloadsFolderRowID, SettingsModel.downloadsAskRowID]
                 .map { probe.marker(SettingsModel.rowMarker($0)) }
             let controls = [SettingsModel.makeDefaultButtonMarker, SettingsModel.startupMenuMarker,
                             SettingsModel.downloadsFolderMarker, SettingsModel.downloadsChooseButtonMarker,
@@ -71,6 +71,7 @@ extension Runtime {
                              && probe.downloads.directory.isEmpty
                              && !probe.downloads.askWhereToSave
                              && probe.downloadFolderName == "Downloads"
+                             && probe.searchSuggestionsEnabled
                              && !probe.defaultBrowserIsDefault
                              && (controls[0]?.width ?? 0) > 0)
             }

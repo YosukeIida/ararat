@@ -204,3 +204,47 @@ func escapeCancellationRequiresTheAuthorizationWindowToClose() {
     #expect(PasswordsAuthPrompt.escapeCancellationError(after: refusal, windowClosed: false)
         == "AXCancelButton unavailable; the authorization window stayed open after process-directed Escape")
 }
+
+@Test @MainActor
+func searchSuggestionsSettingsReadAndWriteWithoutABrowserWindowHost() throws {
+    _ = NSApplication.shared
+    let runtime = Runtime(windowID: "search-suggestions-settings")
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let adapter = try EngineAdapter(path: directory.appendingPathComponent("workspace.sqlite").path,
+                                   windowID: runtime.windowID, card: NSView(), seedSidebar: true)
+    defer { adapter.shutdown() }
+    let workspace = WorkspaceAdapter(windowID: runtime.windowID, session: adapter.session)
+    let keyBindings = KeyBindingsModel(adapter: workspace)
+    let airTraffic = AirTrafficModel(adapter: workspace)
+    runtime.workspace = workspace
+    runtime.keyBindings = keyBindings
+    runtime.airTraffic = airTraffic
+    runtime.snapshot = try #require(adapter.session.store).snapshot(windowId: runtime.windowID)
+    let model = SettingsModel(snapshot: runtime.snapshot, adapter: workspace, publish: { _ in },
+                              resetWidth: {}, keyBindings: keyBindings, airTraffic: airTraffic)
+    let settings = SettingsWindowController(model: model, orderWindowFront: { _ in })
+    defer { settings.window?.contentViewController = nil }
+    runtime.settings = settings
+
+    var stored = false
+    var writes: [Bool] = []
+    let engine = EngineSearchSuggestionsSettings(isEnabled: { stored }, setEnabled: {
+        writes.append($0)
+        stored = $0
+    })
+    #expect(runtime.host == nil)
+    runtime.openSettings(searchSuggestions: engine)
+    let probe = try #require(settings.checkProbe())
+    #expect(!probe.searchSuggestionsEnabled)
+
+    probe.setSearchSuggestionsEnabled(true)
+    #expect(stored && probe.searchSuggestionsEnabled)
+    probe.setSearchSuggestionsEnabled(false)
+    #expect(!stored && !probe.searchSuggestionsEnabled)
+    #expect(writes == [true, false])
+
+    runtime.openSettings(searchSuggestions: engine)
+    #expect(!probe.searchSuggestionsEnabled)
+}

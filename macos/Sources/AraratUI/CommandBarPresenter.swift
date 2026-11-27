@@ -68,11 +68,14 @@ public final class CommandBarPresenter: NSObject, NSWindowDelegate {
                 NotificationCenter.default.addObserver(self, selector: #selector(reposition),
                     name: NSView.frameDidChangeNotification, object: pageCard)
             }
-            NotificationCenter.default.addObserver(self, selector: #selector(reposition),
-                name: NSWindow.didResizeNotification, object: parent)
         }
+        NotificationCenter.default.addObserver(self, selector: #selector(reposition),
+            name: NSWindow.didResizeNotification, object: parent)
         controller.onClose = { [weak self] in self?.finish() }
         controller.onRowsChange = { [weak self] in self?.position() }
+        controller.searchSuggestionCapacity = { [weak self] localRows in
+            self?.searchSuggestionCapacity(localRows: localRows) ?? 0
+        }
     }
 
     public func open(mode: CommandBarMode, prefill: String?) {
@@ -99,7 +102,24 @@ public final class CommandBarPresenter: NSObject, NSWindowDelegate {
     }
 
     @objc private func reposition(_ notification: Notification) {
-        if controller.isOpen { position() }
+        if controller.isOpen {
+            position()
+            controller.refreshSearchSuggestionLayout()
+        }
+    }
+
+    private func searchSuggestionCapacity(localRows: Int) -> Int {
+        guard let parent else { return 0 }
+        let window = parent.frame
+        func top(rows: Int) -> CGFloat {
+            if fixedWidth != nil {
+                return CommandBarMetrics.littleWindowPanelFrame(windowFrame: window, width: 0, rows: rows).maxY
+            }
+            return CommandBarMetrics.panelFrame(windowFrame: window, pageFrame: window,
+                rows: rows, privateWindow: false, hintHeight: hints.fittingSize.height).maxY
+        }
+        let localTop = top(rows: localRows)
+        return (1...CommandBarMetrics.maxSearchSuggestions).prefix { abs(top(rows: localRows + $0) - localTop) < 0.5 }.count
     }
 
     private func position() {
