@@ -127,6 +127,17 @@ if [[ "$release_channel" == preview ]]; then
   [[ "$(plutil -extract CFBundleURLTypes.2.CFBundleURLSchemes.0 raw -o - "$plist")" == chromium ]] ||
     die "expected the engine's chromium direct-launch URL type"
   plutil -remove CFBundleURLTypes.2 "$plist"
+  # Why rewrite nested IDs: the alerts helpers own a notification center per bundle ID.
+  find "$app/Contents" -type f -name Info.plist -print0 |
+    while IFS= read -r -d '' nested_plist; do
+      if id="$(plutil -extract CFBundleIdentifier raw -expect string -o - "$nested_plist" 2>/dev/null)"; then
+        case "$id" in
+          org.chromium.Chromium|org.chromium.Chromium.*)
+            plutil -replace CFBundleIdentifier -string "$bundle_id${id#org.chromium.Chromium}" "$nested_plist"
+            ;;
+        esac
+      fi
+    done
 fi
 cp -- "$package_dir/Resources/$icon.icns" "$app/Contents/Resources/app.icns"
 plutil -remove CFBundleIconName "$plist"

@@ -40,7 +40,6 @@ printf -v notes '%s channel. Unzip the download and move `%s.app` to Application
 if [[ "$dry_run" == 1 ]]; then
   printf 'App: %s.app\nBundle ID: %s\nZip: %s\nRelease: %s %s (%s)\n%s' \
     "$app_name" "$bundle_id" "$archive_name" "$app_name" "$release_version" "$release_flag" "$notes"
-  exit 0
 fi
 
 engine="$(cd -- "$engine" && pwd -P)" || die "engine app directory does not exist"
@@ -79,7 +78,13 @@ ARARAT_VERSION="$release_version" \
   "$scripts/bundle-app.sh" --release "$engine" "$out"
 ditto -c -k --keepParent "$out/$app_name.app" "$zip"
 
-require_new_tag
-gh release create "$tag" "$zip" "$source_archive" "$source_archive.sha256" \
-  --repo "$repo" --target "$head" --title "$app_name $release_version" "$release_flag" --notes "$notes"
+publish=(gh release create "$tag" "$zip" "$source_archive" "$source_archive.sha256"
+  --repo "$repo" --target "$head" --title "$app_name $release_version" "$release_flag" --notes "$notes")
+if [[ "$dry_run" == 1 ]]; then
+  printf '%q ' "${publish[@]}"
+  printf '\n'
+else
+  require_new_tag
+  "${publish[@]}"
+fi
 printf 'Release files: %s\n' "$out"
