@@ -1,0 +1,176 @@
+--- a/components/os_crypt/common/keychain_password_mac.mm
++++ b/components/os_crypt/common/keychain_password_mac.mm
+@@ -6,6 +6,7 @@
+ 
+ #import <Security/Security.h>
+ 
++#include "base/apple/foundation_util.h"
+ #include "base/apple/osstatus_logging.h"
+ #include "base/apple/scoped_cftyperef.h"
+ #include "base/base64.h"
+@@ -38,6 +39,10 @@
+ const char kDefaultServiceName[] = "Chromium Safe Storage";
+ const char kDefaultAccountName[] = "Chromium";
+ #endif
++
++bool IsAraratPreview() {
++  return base::apple::BaseBundleID() == "net.iodine2.ararat.preview";
++}
+ 
+ // These values are persisted to logs. Entries should not be renumbered and
+ // numeric values should never be reused.
+@@ -73,13 +78,15 @@
+ 
+ // static
+ KeychainPassword::KeychainNameType& KeychainPassword::GetServiceName() {
+-  static KeychainNameContainerType service_name(kDefaultServiceName);
++  static KeychainNameContainerType service_name(
++      IsAraratPreview() ? "Ararat Preview Safe Storage" : kDefaultServiceName);
+   return *service_name;
+ }
+ 
+ // static
+ KeychainPassword::KeychainNameType& KeychainPassword::GetAccountName() {
+-  static KeychainNameContainerType account_name(kDefaultAccountName);
++  static KeychainNameContainerType account_name(
++      IsAraratPreview() ? "Ararat Preview" : kDefaultAccountName);
+   return *account_name;
+ }
+ 
+--- a/chrome/browser/chrome_browser_main_mac.mm
++++ b/chrome/browser/chrome_browser_main_mac.mm
+@@ -159,8 +159,13 @@
+   AppController* app_controller = AppController.sharedController;
+   CHECK_NE(nil, NSApp.delegate);
+ 
+-  chrome::BuildMainMenu(NSApp, app_controller,
+-                        l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
++  NSBundle* bundle = base::apple::OuterBundle();
++  std::u16string product_name = l10n_util::GetStringUTF16(IDS_PRODUCT_NAME);
++  if ([bundle.bundleIdentifier isEqualToString:@"net.iodine2.ararat.preview"]) {
++    product_name = base::SysNSStringToUTF16(
++        [bundle objectForInfoDictionaryKey:@"CFBundleName"]);
++  }
++  chrome::BuildMainMenu(NSApp, app_controller, product_name,
+                         /*is_pwa=*/false,
+                         /*is_rtl=*/base::i18n::IsRTL());
+   [app_controller mainMenuCreated];
+--- a/chrome/browser/web_applications/os_integration/mac/apps_folder_support.mm
++++ b/chrome/browser/web_applications/os_integration/mac/apps_folder_support.mm
+@@ -38,6 +38,10 @@
+ std::atomic<bool> g_have_localized_app_dir_name{false};
+ 
+ base::FilePath GetLocalizableAppShortcutsSubdirName() {
++  if (base::apple::BaseBundleID() == "net.iodine2.ararat.preview") {
++    return base::FilePath("Ararat Preview Apps.localized");
++  }
++
+   static const char kChromiumAppDirName[] = "Chromium Apps.localized";
+   static const char kChromeAppDirName[] = "Chrome Apps.localized";
+   static const char kChromeCanaryAppDirName[] = "Chrome Canary Apps.localized";
+@@ -116,7 +120,9 @@
+ 
+   base::FilePath directory_name = apps_directory.BaseName().RemoveExtension();
+   std::u16string localized_name =
+-      shell_integration::GetAppShortcutsSubdirName();
++      base::apple::BaseBundleID() == "net.iodine2.ararat.preview"
++          ? u"Ararat Preview Apps"
++          : shell_integration::GetAppShortcutsSubdirName();
+   NSDictionary* strings_dict = @{
+     base::apple::FilePathToNSString(directory_name) :
+         base::SysUTF16ToNSString(localized_name)
+--- a/chrome/browser/extensions/api/enterprise_reporting_private/chrome_desktop_report_request_helper.cc
++++ b/chrome/browser/extensions/api/enterprise_reporting_private/chrome_desktop_report_request_helper.cc
+@@ -140,7 +140,12 @@
+ 
+ #elif BUILDFLAG(IS_MAC)  // BUILDFLAG(IS_WIN)
+ 
+-constexpr char kServiceName[] = "Endpoint Verification Safe Storage";
++const char* KeychainServiceName() {
++  return base::apple::BaseBundleID() == "net.iodine2.ararat.preview"
++             ? "Ararat Preview Endpoint Verification Safe Storage"
++             : "Endpoint Verification Safe Storage";
++}
++
+ constexpr char kAccountName[] = "Endpoint Verification";
+ 
+ // Custom error code used to represent that a keychain is locked. Value was
+@@ -156,7 +161,7 @@
+   const int kBytes = 128 / 8;
+   std::string password = base::Base64Encode(base::RandBytesAsVector(kBytes));
+ 
+-  OSStatus status = WriteKeychainItem(kServiceName, kAccountName, password);
++  OSStatus status = WriteKeychainItem(KeychainServiceName(), kAccountName, password);
+   if (status == noErr) {
+     *secret = password;
+   } else {
+@@ -182,11 +187,12 @@
+   }
+ 
+   base::AutoLock lock(crypto::apple::GetSecurityFrameworkLock());
++  const char* service_name = KeychainServiceName();
+   UInt32 password_length = 0;
+   void* password_data = nullptr;
+   base::apple::ScopedCFTypeRef<SecKeychainItemRef> item_ref;
+   status = SecKeychainFindGenericPassword(
+-      nullptr, strlen(kServiceName), kServiceName, strlen(kAccountName),
++      nullptr, strlen(service_name), service_name, strlen(kAccountName),
+       kAccountName, &password_length, &password_data,
+       item_ref.InitializeInto());
+   if (status == noErr) {
+@@ -206,7 +212,7 @@
+     // If any of those steps fail don't try to proceed any further.
+     item_ref.reset();
+     OSStatus exists_status = SecKeychainFindGenericPassword(
+-        nullptr, strlen(kServiceName), kServiceName, strlen(kAccountName),
++        nullptr, strlen(service_name), service_name, strlen(kAccountName),
+         kAccountName, nullptr, nullptr, item_ref.InitializeInto());
+     if (exists_status != noErr) {
+       return exists_status;
+@@ -281,6 +287,10 @@
+   got_path = !path.empty();
+ #elif BUILDFLAG(IS_MAC)
+   got_path = base::PathService::Get(base::DIR_APP_DATA, &path);
++  if (got_path && base::apple::BaseBundleID() == "net.iodine2.ararat.preview") {
++    return path.AppendASCII("Ararat Preview")
++        .AppendASCII("Endpoint Verification");
++  }
+ #endif
+   if (!got_path) {
+     return path;
+--- a/chrome/browser/policy/browser_dm_token_storage_mac.mm
++++ b/chrome/browser/policy/browser_dm_token_storage_mac.mm
+@@ -73,7 +73,11 @@
+ bool GetDmTokenFilePath(base::FilePath* token_file_path,
+                         const std::string& client_id,
+                         bool create_dir) {
+-  if (!base::PathService::Get(base::DIR_APP_DATA, token_file_path)) {
++  int directory_key = base::DIR_APP_DATA;
++  if (base::apple::BaseBundleID() == "net.iodine2.ararat.preview") {
++    directory_key = chrome::DIR_USER_DATA;
++  }
++  if (!base::PathService::Get(directory_key, token_file_path)) {
+     LOG_POLICY(WARNING, CBCM_ENROLLMENT)
+         << "Failed to get app data directory path.";
+     return false;
+--- a/chrome/browser/mac/initial_prefs.mm
++++ b/chrome/browser/mac/initial_prefs.mm
+@@ -71,12 +71,16 @@
+     return base::FilePath();
+   }
+ 
+-  base::FilePath new_path = search_path.Append(kInitialPreferencesDirectory)
++  const char* directory =
++      base::apple::BaseBundleID() == "net.iodine2.ararat.preview"
++          ? "Ararat Preview"
++          : kInitialPreferencesDirectory;
++  base::FilePath new_path = search_path.Append(directory)
+                                 .Append(kInitialPreferencesFileName);
+   if (base::PathExists(new_path))
+     return new_path;
+ 
+-  return search_path.Append(kInitialPreferencesDirectory)
++  return search_path.Append(directory)
+       .Append(kLegacyInitialPreferencesFileName);
+ }
+ 

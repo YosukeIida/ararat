@@ -6,7 +6,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use ararat_core::import::arc_sidebar;
-use ararat_core::model::{Kind, Op, Record, Workspace};
+use ararat_core::model::{Kind, LittleWindowHotKey, Op, Record, Workspace};
 use ararat_core::storage::Store;
 use rusqlite::Connection;
 
@@ -18,6 +18,28 @@ fn fresh_db(name: &str) -> PathBuf {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
     }
     path
+}
+
+#[test]
+fn initial_global_shortcut_is_independent_and_preview_can_opt_in() {
+    let stable = fresh_db("stable-shortcut");
+    let preview = fresh_db("preview-shortcut");
+    let shortcut = Some(LittleWindowHotKey::default_shortcut());
+    let (_, stable_workspace) = Store::open(&stable).unwrap();
+    assert_eq!(stable_workspace.little_window_device.hot_key, shortcut);
+
+    let (store, workspace) = Store::open_with_global_shortcut(&preview, false).unwrap();
+    assert!(workspace.little_window_device.hot_key.is_none());
+    drop(store);
+
+    let (store, mut workspace) = Store::open_with_global_shortcut(&preview, false).unwrap();
+    assert!(workspace.little_window_device.hot_key.is_none());
+    store.write(workspace.set_little_window_hot_key(shortcut.clone()));
+    store.flush().unwrap();
+    drop(store);
+
+    let (_, workspace) = Store::open_with_global_shortcut(&preview, false).unwrap();
+    assert_eq!(workspace.little_window_device.hot_key, shortcut);
 }
 
 fn imported() -> Workspace {

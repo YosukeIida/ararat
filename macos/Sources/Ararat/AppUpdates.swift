@@ -64,6 +64,16 @@ final class AppUpdates: NSObject, SPUUpdaterDelegate, NSMenuItemValidation, Sett
         if installNow == nil { state = .checking }
     }
 
+    func updater(_ updater: SPUUpdater, shouldProceedWithUpdate update: SUAppcastItem,
+                 updateCheck: SPUUpdateCheck) throws {
+        // Why check separately: Sparkle's allowed channels always include untagged releases.
+        guard channels.isEmpty || update.channel.map(channels.contains) == true else {
+            throw NSError(domain: "AraratUpdates", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "This update is for Ararat Stable."
+            ])
+        }
+    }
+
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         candidate = item.displayVersionString
         state = .available(item.displayVersionString)

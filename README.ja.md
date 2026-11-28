@@ -4,17 +4,29 @@ Arc の操作感を Chromium の上に作る macOS ブラウザ。設計中。
 
 ライセンスは GPL-3.0（`LICENSE`）。
 
-## ad-hoc 署名ビルドのインストール
+## Ararat のインストール
+
+Homebrew で Stable と Preview をインストールできる。
+
+```sh
+brew install --cask yosukeiida/casks-personal/ararat
+brew install --cask yosukeiida/casks-personal/ararat-preview
+```
+
+Stable（`Ararat.app`）と Preview（`Ararat Preview.app`）は同時に起動できる。
+閲覧データと設定はアプリごとに保存される。Preview で Arc のデータを使うには、
+Preview の Settings からインポートする。
 
 Stable は **Latest** が付いたリリースから取得できる。Stable に入る前の変更を
 試す場合は、**Pre-release** が付いた Preview を選ぶ。[GitHub Releases](https://github.com/YosukeIida/ararat/releases)
 
-ZIP を展開し、`Ararat.app` を `/Applications` に移動する。ad-hoc 署名ビルドは
+ZIP を展開し、アプリを `/Applications` に移動する。ad-hoc 署名ビルドは
 Apple の公証を受けていないため、Gatekeeper が起動をブロックする。ターミナルで
 隔離属性を削除する。
 
 ```sh
-xattr -dr com.apple.quarantine /Applications/Ararat.app
+xattr -dr com.apple.quarantine /Applications/Ararat.app           # Stable
+xattr -dr com.apple.quarantine "/Applications/Ararat Preview.app" # Preview
 ```
 
 ## 開発

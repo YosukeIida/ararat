@@ -5,8 +5,9 @@ usage() {
   cat <<'USAGE'
 usage: bundle-app.sh [--release] <engine-app> <out-dir>
 
-Builds an ad-hoc signed Ararat.app using the matching SwiftPM executable and
-Sparkle framework. ARARAT_FEED_URL and ARARAT_ED_PUBLIC_KEY enable updating.
+Builds an ad-hoc signed Ararat.app or Ararat Preview.app using the matching
+SwiftPM executable and Sparkle framework. ARARAT_FEED_URL (Stable) or
+ARARAT_PREVIEW_FEED_URL (Preview) and ARARAT_ED_PUBLIC_KEY enable updating.
 ARARAT_VERSION sets the version and channel (X.Y.Z for stable,
 X.Y.Z-preview.N for preview). Unversioned builds use 0.0.0-dev.
 ARARAT_BUILD_VERSION overrides CFBundleVersion and is required for updates.
@@ -30,13 +31,14 @@ fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 package_dir="$(cd -- "$script_dir/.." && pwd)"
+. "$script_dir/release-version.sh"
 release_version=0.0.0-dev
 release_channel=stable
 build_version="${ARARAT_BUILD_VERSION:-}"
 if [[ "${ARARAT_VERSION+x}" ]]; then
-  . "$script_dir/release-version.sh"
   parse_release_tag "v$ARARAT_VERSION" || die "expected X.Y.Z or X.Y.Z-preview.N in ARARAT_VERSION"
 fi
+set_release_identity
 if [[ "$release" == 1 ]]; then
   [[ -n "${ARARAT_VERSION:-}" && -n "$build_version" ]] ||
     die "--release requires ARARAT_VERSION and ARARAT_BUILD_VERSION"
@@ -45,11 +47,19 @@ fi
 if [[ -n "$build_version" && ! "$build_version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
   die "expected a numeric ARARAT_BUILD_VERSION"
 fi
-if [[ -n "${ARARAT_FEED_URL:-}" || -n "${ARARAT_ED_PUBLIC_KEY:-}" ]]; then
-  [[ -n "${ARARAT_FEED_URL:-}" && -n "${ARARAT_ED_PUBLIC_KEY:-}" && -n "$build_version" ]] ||
-    die "updates require ARARAT_FEED_URL, ARARAT_ED_PUBLIC_KEY and ARARAT_BUILD_VERSION"
+feed_url="${ARARAT_FEED_URL:-}"
+feed_variable=ARARAT_FEED_URL
+if [[ "$release_channel" == preview ]]; then
+  feed_url="${ARARAT_PREVIEW_FEED_URL:-}"
+  feed_variable=ARARAT_PREVIEW_FEED_URL
+  [[ -z "${ARARAT_FEED_URL:-}" || "$feed_url" != "$ARARAT_FEED_URL" ]] ||
+    die "Preview and Stable must use separate Sparkle feeds"
+fi
+if [[ -n "$feed_url" || -n "${ARARAT_ED_PUBLIC_KEY:-}" ]]; then
+  [[ -n "$feed_url" && -n "${ARARAT_ED_PUBLIC_KEY:-}" && -n "$build_version" ]] ||
+    die "updates require $feed_variable, ARARAT_ED_PUBLIC_KEY and ARARAT_BUILD_VERSION"
   . "$script_dir/configure-updates.sh"
-  validate_update_configuration
+  validate_update_configuration "$feed_url"
 fi
 
 engine_app="$(cd -- "$1" && pwd)"
@@ -85,7 +95,7 @@ if [[ "$release" == 1 ]]; then
   /bin/bash "$package_dir/../engine/scripts/corresponding-source" "$out_dir/Ararat-source"
 fi
 
-app="$out_dir/Ararat.app"
+app="$out_dir/$app_name.app"
 rm -rf -- "$app"
 mkdir -p -- "$out_dir"
 cp -R -- "$engine_app" "$app"
@@ -104,12 +114,32 @@ cp -- "$package_dir/.build/artifacts/sparkle/Sparkle/LICENSE" "$app/Contents/Res
 
 plist="$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable Ararat" "$plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleName Ararat" "$plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Ararat" "$plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier net.iodine2.ararat" "$plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName $app_name" "$plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $app_name" "$plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $bundle_id" "$plist"
 # Why not rebuild Assets.car with our AppIcon: its "Icon" image is the document badge the UTTypes use.
 # Without CFBundleIconName, macOS takes the app icon from CFBundleIconFile (app.icns) instead.
-cp -- "$package_dir/Resources/AppIcon.icns" "$app/Contents/Resources/app.icns"
+icon=AppIcon
+if [[ "$release_channel" == preview ]]; then
+  icon=AppIconPreview
+  plutil -replace CrProductDirName -string "$app_name" "$plist"
+  # Why keep http and https: LaunchServices needs both for an explicit default-browser request.
+  [[ "$(plutil -extract CFBundleURLTypes.2.CFBundleURLSchemes.0 raw -o - "$plist")" == chromium ]] ||
+    die "expected the engine's chromium direct-launch URL type"
+  plutil -remove CFBundleURLTypes.2 "$plist"
+  # Why rewrite nested IDs: the alerts helpers own a notification center per bundle ID.
+  find "$app/Contents" -type f -name Info.plist -print0 |
+    while IFS= read -r -d '' nested_plist; do
+      if id="$(plutil -extract CFBundleIdentifier raw -expect string -o - "$nested_plist" 2>/dev/null)"; then
+        case "$id" in
+          org.chromium.Chromium|org.chromium.Chromium.*)
+            plutil -replace CFBundleIdentifier -string "$bundle_id${id#org.chromium.Chromium}" "$nested_plist"
+            ;;
+        esac
+      fi
+    done
+fi
+cp -- "$package_dir/Resources/$icon.icns" "$app/Contents/Resources/app.icns"
 plutil -remove CFBundleIconName "$plist"
 
 # Why keep the original value: the launcher must load the exact Chromium build it ships.
@@ -136,8 +166,8 @@ if [[ -n "${ARARAT_CORRESPONDING_SOURCE_URL:-}" ]]; then
 elif [[ "$release" == 1 ]]; then
   plutil -insert AraratLocalCorrespondingSource -bool true "$plist"
 fi
-if [[ -n "${ARARAT_FEED_URL:-}" ]]; then
-  configure_updates "$plist"
+if [[ -n "$feed_url" ]]; then
+  configure_updates "$plist" "$feed_url"
 fi
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/bundle-app.XXXXXX")"

@@ -60,7 +60,7 @@ ararat/
     Sources/AraratHarness/  UI harness: real components on real core data, a placeholder where the page goes
     scripts/build-core.sh   builds the core and regenerates the bindings
     Sources/Ararat/         アプリの起動実行体: framework を読み込み、ChromeMain を呼ぶ
-    scripts/bundle-app.sh   エンジンの Chromium.app を Ararat.app に組み、ad-hoc で署名する
+    scripts/bundle-app.sh   Chromium.app から Ararat.app または Ararat Preview.app を組み立て、ad-hoc 署名する
   docs/
 ```
 
@@ -296,7 +296,7 @@ workspace のページが非表示なら、通常は active タブを報告し�
 
 ## 5. 状態の所有
 
-workspace の store は、指定時は `--ararat-db=<path>`、それ以外はエンジンから取得した Chrome の user data directory 内の `Ararat/workspace.sqlite` に置く。store の呼び出しは単一の serial queue、エンジンの呼び出しはメインスレッドで行う（我々の規則）。
+workspace の store は、指定時は `--ararat-db=<path>`、それ以外はエンジンから取得した user data directory 内の `Ararat/workspace.sqlite` に置く。既定のディレクトリは Stable が `~/Library/Application Support/Chromium`、Preview が `~/Library/Application Support/Ararat Preview` である（§12）。store の呼び出しは単一の serial queue、エンジンの呼び出しはメインスレッドで行う（我々の規則）。
 
 ### 5.1 誰が何を書くか
 
@@ -480,8 +480,8 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 
 ## 12. 配布
 
-- SwiftPM で Sparkle 2.10.1 を固定する。Chromium のアプリデリゲートがアップデーターを保持し、アプリメニューの **Check for Updates…** から Sparkle 標準の画面を開く。更新設定のないバンドルでは、この項目を無効にする。Stable は Sparkle の既定チャネルを使う。Preview ビルドは `preview` タグの付いた項目も受け付ける。
-- 更新を有効にするには、`macos/scripts/bundle-app.sh` に `ARARAT_FEED_URL`（公開先の HTTPS appcast URL）、`ARARAT_ED_PUBLIC_KEY`（EdDSA 公開鍵）、単調増加する `ARARAT_BUILD_VERSION` を渡す。ビルド番号は `CFBundleVersion` に入る。バンドルのチャネルは `ARARAT_VERSION` で決まる。ランチャーは `AraratChromiumVersion` を基に同梱した Chromium フレームワークを探す。
+- SwiftPM で Sparkle 2.10.1 を固定する。Chromium のアプリデリゲートがアップデーターを保持し、アプリメニューの **Check for Updates…** から Sparkle 標準の画面を開く。更新設定がないバンドルでは項目が無効になる。Stable は専用フィードのチャネル指定がない項目を受け入れ、Preview は別のフィードの `preview` 項目のみを受け入れる。
+- 更新を有効にするには、`macos/scripts/bundle-app.sh` にフィードの HTTPS URL（Stable は `ARARAT_FEED_URL`、Preview は `ARARAT_PREVIEW_FEED_URL`）、EdDSA 公開鍵 `ARARAT_ED_PUBLIC_KEY`、単調増加する `ARARAT_BUILD_VERSION` を渡す。ビルド番号は `CFBundleVersion` に入る。バンドルのチャネルは `ARARAT_VERSION` で決まる。ランチャーは `AraratChromiumVersion` を基に同梱した Chromium フレームワークを探す。
 - `macos/scripts/sign-release.sh --identity <identity|-> [--entitlements <release.plist>] <Ararat.app>` は、組み立て済みのアプリを再署名する。Developer ID で署名すると、hardened runtime とセキュアタイムスタンプが付く。ad-hoc 署名には `--identity -` を指定する。アプリと Chromium のヘルパーには、バンドルの ad-hoc 署名に含まれる entitlement を引き継ぐ。アプリの entitlement を上書きする場合は、エンジンのデバイス系 entitlement と承認済みの本番用 entitlement を含む plist 全体を渡す。付与された entitlement が provisioning profile を必要とする場合は、署名前に対応するプロファイルを埋め込む。署名用キーチェーンは `ARARAT_SIGNING_KEYCHAIN` で明示できる。スクリプトは `codesign` でバンドル全体の署名を検証する。Developer ID で署名したビルドでは、Gatekeeper の判定も確認する。
 - ローカルでは `macos/scripts/notarize.sh --keychain-profile <profile> <Ararat.app>`、API キーで認証する場合は `macos/scripts/notarize.sh --key <p8> --key-id <id> --issuer <id> <Ararat.app>` を実行する。アプリを ZIP にして申請し、受理後にチケットを添付して検証し、Gatekeeper の受理を確認する。
 - チケットを添付したバンドルを `ditto -c -k --keepParent` でアーカイブする。アーカイブのディレクトリには、前回の appcast とフィードに残すアーカイブを置く。`macos/scripts/make-appcast.sh --key-file <private-key-file> <stable|preview> <build-version> <archive-dir>` を実行する。Sparkle は指定された鍵ファイルを使い、フィードと更新アーカイブに署名する。オーナーの EdDSA 秘密鍵はアーカイブのディレクトリ外に置く。フィードとアーカイブは、オーナーが選ぶ配布先（GitHub Releases または iodine2.net）に公開する。ダウンロード元と appcast の URL のディレクトリが異なる場合は、新規項目の `ARARAT_DOWNLOAD_URL_PREFIX` を指定する。
@@ -489,7 +489,12 @@ workspace、Air Traffic Control の規則、キーバインド、設定、パス
 - bundle id、team id、entitlement（passkey 用のキーチェーンのアクセスグループ、Bluetooth の使用）、ヘルパーの署名は、資格情報の保存がこれらに依存するため、phase 3 の spike で確定する。
 - iCloud Keychain または Touch ID の profile authenticator で passkey を作成するには、それぞれ team に結び付いた browser credential entitlement または keychain access group が必要である。ad-hoc バンドルは両方を外す。本番の entitlement の承認と検証には、オーナーによる Developer ID の設定が必要である（我々の規則）。
 - phase 3 のバンドルには `NSBluetoothAlwaysUsageDescription` がない。WebAuthn の discovery はダイアログの表示前に Bluetooth に到達し得る。Bluetooth API の呼び出しでプロセスが異常終了するか、システムの権限確認が出る可能性がある。この経路は表示ありの prompts の画面検査でのみ試す（我々の規則）。
-- `bundle-app.sh` は ad-hoc 署名を行う。Chromium の dylib、ヘルパー実行ファイル、ヘルパーアプリ、フレームワークを内側から署名する。続いて Sparkle の XPC サービス、Autoupdate、Updater.app、フレームワークを署名し、最後に Ararat.app を署名する。Renderer と GPU のヘルパーはエンジンの allow-jit entitlement を持つ。ad-hoc のアプリにはエンジンのデバイス系 entitlement を付け、hardened runtime と team に結び付いた entitlement を外す。外した entitlement の名前は stderr に出す。bundle ID は `net.iodine2.ararat` で、バンドルの名前と表示名はいずれも Ararat である。コンパイル済みの製品名とヘルパー名は Chromium であり、アプリメニューには「Quit Chromium」と表示される。core のバインディングは「Quit Ararat」、harness のメニューには「Quit Ararat Harness」と表示される。テスト実行時には `CFFIXED_USER_HOME` を使い捨てのホームに設定し、環境設定の書き込み先を分離する（我々の規則）。
+- `bundle-app.sh` は Chromium の dylib、ヘルパー、フレームワーク、Sparkle の XPC サービス、Autoupdate、Updater.app、フレームワークを内側から ad-hoc 署名し、最後にアプリを署名する。Renderer と GPU のヘルパーはエンジンの allow-jit entitlement を持つ。アプリにはエンジンのデバイス系 entitlement を付け、hardened runtime と team に結び付いた entitlement を外す。外した entitlement の名前は stderr に出す。
+- Stable のバンドルは `Ararat.app`（`net.iodine2.ararat`）で、名前と表示名は Ararat である。Preview は `Ararat Preview.app`（`net.iodine2.ararat.preview`）で、名前と表示名は Ararat Preview である。ZIP 名はそれぞれ `Ararat-<version>.zip` と `Ararat-Preview-<version>.zip` である。Preview のアイコンに付けたバッジは Dock とオンボーディングに表示される。Chromium のメニュービルダーは Stable ではコンパイル済みの製品名 Chromium を使い、Preview ではバンドルの `CFBundleName` を使う。core のバインディングは「Quit Ararat」、harness のメニューは「Quit Ararat Harness」である。
+- `CrProductDirName` によって Preview のプロファイル、workspace、既定のログ、Crashpad のパス、process singleton が `~/Library/Application Support/Ararat Preview` に分かれる。Chromium のプロファイルキャッシュは `~/Library/Caches/Ararat Preview` にあり、Web アプリのショートカットは `~/Applications/Ararat Preview Apps.localized` に置く。macOS と Sparkle の環境設定はバンドル ID ごとに分かれる。テストでは `CFFIXED_USER_HOME` に使い捨てのホームを指定する。
+- Stable の Safe Storage はサービス名 `Chromium Safe Storage`、アカウント名 `Chromium` の組である。Preview は `Ararat Preview Safe Storage` と `Ararat Preview` を使う。Endpoint Verification のサービス名も Preview では `Ararat Preview Endpoint Verification Safe Storage` になる。
+- Preview は Endpoint Verification のファイルとブラウザのクラウド登録トークンを専用の user data directory に置く。マシン単位の初期設定は `/Library/Application Support/Ararat Preview` から読み込む。
+- Stable のグローバルショートカットの既定値は ⌥⌘N である。Preview では Settings で利用者が設定するまで無効である。どちらも既定のブラウザにするには利用者の明示操作が必要である。Preview は `http`、`https`、`file` を登録する。`chromium:` の直接起動は Stable の登録に含まれる。
 - すべてのリリースに Corresponding Source を付ける（4.7）。
 - Windows と Linux のアップデーターは、それぞれの phase で決定する。
 

@@ -4,17 +4,29 @@ A macOS browser on Chromium with an Arc-style workflow. In design.
 
 Licensed under GPL-3.0 (`LICENSE`).
 
-## Installing an ad-hoc build
+## Installing Ararat
+
+Install either or both Homebrew casks.
+
+```sh
+brew install --cask yosukeiida/casks-personal/ararat
+brew install --cask yosukeiida/casks-personal/ararat-preview
+```
+
+Stable (`Ararat.app`) and Preview (`Ararat Preview.app`) can run side by
+side. Each keeps its own browser data and settings. To bring Arc data into
+Preview, import it from Preview's Settings.
 
 Download the Stable build marked **Latest**, or choose a **Pre-release** to try
 the Preview channel ahead of Stable. [GitHub Releases](https://github.com/YosukeIida/ararat/releases)
 
-Unzip the download and move `Ararat.app` to `/Applications`. Gatekeeper blocks
+Unzip the download and move the app to `/Applications`. Gatekeeper blocks
 the ad-hoc build because Apple has not notarized it. Remove its quarantine
 attribute in Terminal.
 
 ```sh
-xattr -dr com.apple.quarantine /Applications/Ararat.app
+xattr -dr com.apple.quarantine /Applications/Ararat.app           # Stable
+xattr -dr com.apple.quarantine "/Applications/Ararat Preview.app" # Preview
 ```
 
 ## Development

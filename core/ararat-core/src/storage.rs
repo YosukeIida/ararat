@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, TransactionBehavior, params};
 
-use crate::model::{Kind, Op, Record, Workspace};
+use crate::model::{Kind, LittleWindowDevice, Op, Record, Workspace};
 
 pub const BATCH_WINDOW: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
@@ -68,7 +68,11 @@ pub struct Store {
 
 impl Store {
     pub fn open(path: &Path) -> Result<(Store, Workspace), StoreError> {
-        let conn = Connection::open(path)?;
+        Self::open_with_global_shortcut(path, true)
+    }
+
+    pub fn open_with_global_shortcut(path: &Path, enable_initial_shortcut: bool) -> Result<(Store, Workspace), StoreError> {
+        let mut conn = Connection::open(path)?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         let existing: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'records')", [], |row| row.get(0))?;
         if version != SCHEMA_VERSION && (version != 0 || existing) { return Err(StoreError("unsupported database version; use a new database".into())); }
@@ -78,9 +82,21 @@ impl Store {
         }
         // FULL rather than NORMAL: it also survives power loss, at one fsync per batch.
         conn.execute_batch("PRAGMA synchronous = FULL;")?;
-        conn.execute_batch(SCHEMA)?;
-        if version == 0 { conn.pragma_update(None, "user_version", SCHEMA_VERSION)?; }
         conn.busy_timeout(BUSY_TIMEOUT)?;
+        if version == 0 {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(SCHEMA)?;
+            let current_version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
+            if current_version == 0 && !enable_initial_shortcut {
+                let record = Record::LittleWindowDevice(LittleWindowDevice { hot_key: None, ..LittleWindowDevice::default() });
+                tx.execute("INSERT OR IGNORE INTO records (kind, id, body) VALUES (?1, ?2, ?3)",
+                    params![record.kind().as_str(), record.id(), record.body()])?;
+            }
+            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            tx.commit()?;
+        } else {
+            conn.execute_batch(SCHEMA)?;
+        }
         let workspace = load(&conn)?;
 
         let (tx, rx) = mpsc::channel();

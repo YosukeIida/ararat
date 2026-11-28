@@ -1,7 +1,7 @@
 #!/bin/bash
 
 validate_update_configuration() {
-  case "${ARARAT_FEED_URL:-}" in
+  case "$1" in
     https://?*|http://localhost/*|http://localhost:*) ;;
     *) printf 'Expected an HTTPS feed URL or a localhost HTTP test feed\n' >&2; return 1 ;;
   esac
@@ -13,7 +13,7 @@ validate_update_configuration() {
 
 configure_updates() {
   local plist="$1"
-  plutil -insert SUFeedURL -string "$ARARAT_FEED_URL" "$plist"
+  plutil -insert SUFeedURL -string "$2" "$plist"
   plutil -insert SUPublicEDKey -string "$ARARAT_ED_PUBLIC_KEY" "$plist"
   plutil -replace SUVerifyUpdateBeforeExtraction -bool true "$plist"
   plutil -replace SURequireSignedFeed -bool true "$plist"
