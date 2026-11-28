@@ -52,3 +52,4 @@ ararat/password-prompt-trace.patch
 ararat/passwords-touch-id-check.patch
 ararat/menu-bar.patch
 ararat/search-suggestions-pref.patch
+ararat/macos-preview-identity.patch

@@ -15,6 +15,7 @@ scripts="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 unset SDKROOT
 parse_release_tag "$tag" || die "expected vX.Y.Z or vX.Y.Z-preview.N"
+set_release_identity
 
 engine="$HOME/chromium-build/src/out/Ararat/Chromium.app"
 dry_run=0
@@ -32,6 +33,15 @@ while [[ $# -gt 0 ]]; do
     *) usage >&2; exit 2 ;;
   esac
 done
+
+release_flag=--latest
+[[ "$release_channel" != preview ]] || release_flag=--prerelease
+printf -v notes '%s channel. Unzip the download and move `%s.app` to Applications. This build is ad-hoc signed. In Terminal, run `xattr -dr com.apple.quarantine "/Applications/%s.app"`.\n' "$channel_name" "$app_name" "$app_name"
+if [[ "$dry_run" == 1 ]]; then
+  printf 'App: %s.app\nBundle ID: %s\nZip: %s\nRelease: %s %s (%s)\n%s' \
+    "$app_name" "$bundle_id" "$archive_name" "$app_name" "$release_version" "$release_flag" "$notes"
+  exit 0
+fi
 
 engine="$(cd -- "$engine" && pwd -P)" || die "engine app directory does not exist"
 [[ -d "$engine/Contents/MacOS" ]] || die "no engine app: $engine"
@@ -62,27 +72,14 @@ nix develop ./nix --no-update-lock-file -c "$scripts/build-core.sh"
 
 out="$(mktemp -d)"
 source_archive="$out/Ararat-source.tar.xz"
-zip="$out/Ararat-$release_version.zip"
+zip="$out/$archive_name"
 ARARAT_VERSION="$release_version" \
   ARARAT_BUILD_VERSION="$(date -u +%Y%m%d%H%M)" \
   ARARAT_CORRESPONDING_SOURCE_URL="https://github.com/$repo/releases/download/$tag/${source_archive##*/}" \
   "$scripts/bundle-app.sh" --release "$engine" "$out"
-ditto -c -k --keepParent "$out/Ararat.app" "$zip"
+ditto -c -k --keepParent "$out/$app_name.app" "$zip"
 
-release_flag=--latest
-channel_name=Stable
-if [[ "$release_channel" == preview ]]; then
-  release_flag=--prerelease
-  channel_name=Preview
-fi
-printf -v notes '%s channel. Unzip the download and move `Ararat.app` to Applications. This build is ad-hoc signed. In Terminal, run `xattr -dr com.apple.quarantine /Applications/Ararat.app`.\n' "$channel_name"
-publish=(gh release create "$tag" "$zip" "$source_archive" "$source_archive.sha256"
-  --repo "$repo" --target "$head" --title "Ararat $release_display_version" "$release_flag" --notes "$notes")
-if [[ "$dry_run" == 1 ]]; then
-  printf '%q ' "${publish[@]}"
-  printf '\n'
-else
-  require_new_tag
-  "${publish[@]}"
-fi
+require_new_tag
+gh release create "$tag" "$zip" "$source_archive" "$source_archive.sha256" \
+  --repo "$repo" --target "$head" --title "$app_name $release_version" "$release_flag" --notes "$notes"
 printf 'Release files: %s\n' "$out"

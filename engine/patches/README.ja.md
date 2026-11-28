@@ -69,6 +69,7 @@ generic のパッチは pull request の head のバイト単位のコピーで�
 | `ararat/passwords-touch-id-check.patch` | 独自 |
 | `ararat/menu-bar.patch` | 独自。Araratのメニュー名を定義し、ChromiumのHistory、Bookmarks、Profilesの各メニューとコントローラ、タブ一覧のコントローラの生成を省く。BackとForwardはViewに置く |
 | `ararat/search-suggestions-pref.patch` | 自作 |
+| `ararat/macos-preview-identity.patch` | 自作 |
 
 ## 取り込んだパッチを選んだ理由
 

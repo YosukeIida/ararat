@@ -26,6 +26,28 @@ func updaterRequiresAConfiguredFeedAndPublicKey() throws {
 }
 
 @Test @MainActor
+func previewUpdaterRejectsUntaggedStableItems() throws {
+    let updates = AppUpdates(channels: ["preview"])
+    let controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: updates,
+                                                  userDriverDelegate: nil)
+    var properties: [String: Any] = [
+        "title": "Ararat", "sparkle:version": "1.2",
+        "enclosure": ["url": "https://example.com/Ararat.zip"],
+    ]
+    let untagged = try #require(SUAppcastItem(dictionary: properties))
+    do {
+        try updates.updater(controller.updater, shouldProceedWithUpdate: untagged, updateCheck: .updates)
+        Issue.record("Preview accepted an untagged update")
+    } catch let error as NSError {
+        #expect(error.domain == "AraratUpdates")
+    }
+
+    properties["sparkle:channel"] = "preview"
+    let preview = try #require(SUAppcastItem(dictionary: properties))
+    try updates.updater(controller.updater, shouldProceedWithUpdate: preview, updateCheck: .updates)
+}
+
+@Test @MainActor
 func sparkleRelaunchDelegateBypassesQuitConfirmationUntilTheCycleEnds() {
     let updates = AppUpdates(channels: [])
     let controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: updates, userDriverDelegate: nil)

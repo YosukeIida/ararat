@@ -79,6 +79,7 @@ Both projects are BSD-3-Clause; their LICENSE files are kept unchanged at
 | `ararat/passwords-touch-id-check.patch` | ours |
 | `ararat/menu-bar.patch` | ours, Ararat menu branding and construction without Chromium’s History, Bookmarks, Profiles and tab-list controllers, with Back and Forward in View |
 | `ararat/search-suggestions-pref.patch` | ours |
+| `ararat/macos-preview-identity.patch` | ours |
 
 ## Why these upstream patches
 

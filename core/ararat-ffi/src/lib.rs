@@ -80,7 +80,12 @@ impl WorkspaceStore {
 impl WorkspaceStore {
     #[uniffi::constructor]
     pub fn open(path: String) -> Result<Arc<Self>, CoreError> {
-        let (store, workspace) = Store::open(Path::new(&path))?;
+        Self::open_with_global_shortcut(path, true)
+    }
+
+    #[uniffi::constructor]
+    pub fn open_with_global_shortcut(path: String, enable_initial_shortcut: bool) -> Result<Arc<Self>, CoreError> {
+        let (store, workspace) = Store::open_with_global_shortcut(Path::new(&path), enable_initial_shortcut)?;
         Ok(Arc::new(Self { store, workspace: Mutex::new(workspace), live: Mutex::new(ararat_core::live::Live::new()), private: false }))
     }
 

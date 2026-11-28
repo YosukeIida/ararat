@@ -1348,8 +1348,10 @@ final class Runtime: NSObject, NSMenuItemValidation {
     if session == nil || reopening || restoringWindow != nil {
       let owner = root ?? self
       let openIDs = Set(([owner] + owner.children).filter { $0.hasUsableHost }.map(\.windowID))
+      let enableInitialShortcut = Bundle.main.bundleIdentifier != "net.iodine2.ararat.preview"
       running.queue.sync {
-        running.store = try? running.store ?? WorkspaceStore.open(path: path)
+        running.store = try? running.store ?? WorkspaceStore.openWithGlobalShortcut(
+          path: path, enableInitialShortcut: enableInitialShortcut)
       }
       let kept = running.queue.sync { running.store?.keptWindows() ?? [] }
       let launchRoot = session == nil && !reopening && restoringWindow == nil
